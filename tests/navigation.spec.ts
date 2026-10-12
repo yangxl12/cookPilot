@@ -49,8 +49,8 @@ test('首屏减少顶部留白和多余入口，提交后标题与输入框固�
   const center = await page.locator('.home-center').boundingBox();
   const header = await page.locator('.home-header').boundingBox();
   expect(header!.height).toBe(64);
-  expect(center!.y).toBeGreaterThan(header!.height + 24);
-  expect(center!.y).toBeLessThan(180);
+  expect(center!.y - header!.height).toBe(20);
+  expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight)).toBe(true);
   await expect(page.getByRole('button', { name: '菜谱大全', exact: true })).toHaveCount(0);
   await expect(page.locator('.prompt-intro, .prompt-examples')).toHaveCount(0);
   await page.screenshot({ path: '.local/home-compact.png', animations: 'disabled' });

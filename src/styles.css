@@ -163,6 +163,20 @@ textarea {
   border-bottom: 1px solid var(--line);
 }
 
+.root-header,
+.process-header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: #fffffff5;
+  backdrop-filter: blur(16px);
+}
+
+.root-header {
+  height: calc(76px + env(safe-area-inset-top));
+  padding-top: env(safe-area-inset-top);
+}
+
 .process-header > span {
   font-size: 14px;
   font-weight: 550;
@@ -319,7 +333,7 @@ textarea {
   display: flex;
   align-items: flex-start;
   min-height: 100dvh;
-  padding-top: calc(clamp(104px, 18dvh, 160px) + env(safe-area-inset-top));
+  padding-top: calc(84px + env(safe-area-inset-top));
 }
 
 .prompt-card {
@@ -2979,14 +2993,15 @@ textarea {
   display: flex;
   flex-direction: column;
   height: 100dvh;
-  min-height: 520px;
+  min-height: 0;
+  overflow: hidden;
   background: #f6f8f6;
 }
 .cards-page .process-header {
-  flex: 0 0 64px;
+  flex: 0 0 calc(64px + env(safe-area-inset-top));
   background: #fff;
   gap: 4px;
-  padding: 0 12px;
+  padding: env(safe-area-inset-top) 12px 0;
 }
 .cards-page .process-header > span {
   flex: 1;
@@ -3033,6 +3048,7 @@ textarea {
   height: 100%;
   padding: 0 32px;
   overflow-x: auto;
+  overflow-y: hidden;
   scroll-snap-type: x mandatory;
   scrollbar-width: none;
   overscroll-behavior-x: contain;
@@ -3041,6 +3057,7 @@ textarea {
   display: none;
 }
 .step-card {
+  position: relative;
   flex: 0 0 100%;
   min-width: 0;
   height: 100%;
