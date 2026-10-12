@@ -288,11 +288,6 @@ textarea {
   width: 100%;
 }
 
-.favorite,
-.is-favorite {
-  color: #aa6546;
-}
-
 .status-dot {
   display: inline-block;
   width: 6px;
@@ -334,7 +329,7 @@ textarea {
 }
 
 .prompt-card h1 {
-  margin-bottom: 28px;
+  margin-bottom: 12px;
   text-align: center;
   font-size: 29px;
   line-height: 1.4;
@@ -1426,19 +1421,6 @@ textarea {
   color: var(--muted);
 }
 
-.favorite-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  width: 100%;
-  min-height: 46px;
-  margin-top: 20px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  font-size: 13px;
-}
-
 .library-page {
   padding-top: 10px;
 }
@@ -1479,7 +1461,7 @@ textarea {
 .library-tabs {
   display: flex;
   gap: 26px;
-  margin: 20px 0 10px;
+  margin: 0 0 18px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -1529,7 +1511,8 @@ textarea {
   text-align: left;
 }
 
-.guide-main > img {
+.guide-main > img,
+.guide-main > .saved-dish-icon {
   width: 86px;
   height: 92px;
   border-radius: 12px;
@@ -1585,10 +1568,6 @@ textarea {
   padding: 4px 0;
   color: var(--muted);
   font-size: 11px;
-}
-
-.guide-card-bottom > button.favorite {
-  color: #aa6546;
 }
 
 .guide-card-bottom > span {
@@ -2464,7 +2443,7 @@ textarea {
 
 .data-stats {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 10px;
   padding: 0 0 24px;
 }
@@ -2595,7 +2574,8 @@ textarea {
   .guide-main {
     gap: 11px;
   }
-  .guide-main > img {
+  .guide-main > img,
+  .guide-main > .saved-dish-icon {
     width: 70px;
     height: 86px;
   }
@@ -2668,6 +2648,150 @@ textarea {
 .prompt-input {
   position: relative;
 }
+.prompt-intro {
+  margin-bottom: 24px;
+  color: var(--muted);
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.8;
+}
+.prompt-examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.prompt-examples button {
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.prompt-examples button:hover {
+  color: var(--green);
+  background: var(--tint);
+}
+.home.home-conversation {
+  align-items: flex-start;
+  padding-top: 22px;
+}
+.home-conversation .prompt-card h1 {
+  margin-bottom: 28px;
+  text-align: left;
+  font-size: 22px;
+}
+.discovery-conversation {
+  margin-bottom: 24px;
+}
+.discovery-turn + .discovery-turn {
+  margin-top: 28px;
+}
+.discovery-author {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 10px;
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 600;
+}
+.discovery-summary {
+  font-size: 14px;
+  line-height: 1.85;
+  overflow-wrap: anywhere;
+}
+.discovery-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.8;
+}
+.recommendations {
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.recommendation {
+  padding: 17px 16px;
+}
+.recommendation + .recommendation {
+  border-top: 1px solid var(--line);
+}
+.recommendation-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.recommendation-heading h2 {
+  font-size: 17px;
+  letter-spacing: -0.3px;
+}
+.recipe-source {
+  padding: 3px 6px;
+  border-radius: 5px;
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.recipe-source.saved {
+  background: var(--tint);
+  color: var(--green);
+}
+.recommendation-reason {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.recommendation-meta,
+.recommendation-meta > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.recommendation-meta {
+  gap: 14px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.recommendation-saved-note,
+.recommendation-warning {
+  margin-top: 10px;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--green);
+}
+.recommendation-warning {
+  color: #96603c;
+}
+.recommendation-select {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 42px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--green);
+  color: white;
+  font-size: 12px;
+}
+.recommendation-select:hover:not(:disabled) {
+  background: var(--deep);
+}
+.home-conversation .prompt-card textarea {
+  height: 106px;
+}
 .catalog-entry {
   display: flex;
   align-items: center;
@@ -2689,10 +2813,6 @@ textarea {
 }
 .catalog-entry:hover {
   background: var(--soft);
-}
-.catalog-page {
-  padding-top: 24px;
-  padding-bottom: 36px;
 }
 .catalog-search {
   display: flex;

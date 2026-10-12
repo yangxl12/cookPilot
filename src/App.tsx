@@ -15,7 +15,6 @@ import {
   Eye,
   EyeOff,
   Flame,
-  Heart,
   Info,
   Layers,
   LoaderCircle,
@@ -37,7 +36,9 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import type { Guide, Model, Preferences, Recipe, State, Step, Timer, View } from './data';
+import type { Guide, GuideSource, Model, Preferences, Recipe, State, Step, Timer, View } from './data';
+import { discover, findSavedRecipe, parseAvoidances, recipeConflict } from './discovery';
+import type { DiscoveryTurn, Recommendation } from './discovery';
 import {
   defaultConditions,
   defaultPreferences,
@@ -53,6 +54,8 @@ import {
 } from './data';
 
 type Message = { id: string; role: 'assistant' | 'user'; text: string };
+type LibraryTab = 'ai' | 'recipes';
+const isRecipeLibraryHash = (hash: string) => ['#recipes', '#library/recipes'].includes(hash);
 type Adjustment = {
   kind: 'water' | 'chili' | 'salt' | 'vinegar';
   title: string;
@@ -238,17 +241,26 @@ function App() {
       saved.guides.some((g) => g.id === saved.activeId)
     )
       return hash;
-    return ['library', 'settings', 'recipes'].includes(hash) ? hash : 'home';
+    if (isRecipeLibraryHash(window.location.hash)) return 'library';
+    return ['library', 'settings'].includes(hash) ? hash : 'home';
   });
   const [preferencesDraft, setPreferencesDraft] = useState<Preferences>(state.preferences);
   const [prompt, setPrompt] = useState('');
+  const [discoveryTurns, setDiscoveryTurns] = useState<DiscoveryTurn[]>([]);
+  const [homeBusy, setHomeBusy] = useState<'analyzing' | 'generating' | null>(null);
+  const [generatingId, setGeneratingId] = useState<string | null>(null);
+  const discoveryRequest = useRef(0);
+  const discoveryBusy = useRef(false);
+  const discoveryLatest = useRef<HTMLDivElement>(null);
   const [requestedSheet, setSheet] = useState<string | null>(null);
   const [toast, setToast] = useState('');
   const [now, setNow] = useState(Date.now());
   const [showKeyPoints, setShowKeyPoints] = useState(false);
   const [recipeFilter, setRecipeFilter] = useState('全部');
   const [recipeSearch, setRecipeSearch] = useState('');
-  const [libraryFilter, setLibraryFilter] = useState('全部');
+  const [libraryTab, setLibraryTab] = useState<LibraryTab>(() =>
+    isRecipeLibraryHash(window.location.hash) ? 'recipes' : 'ai',
+  );
   const [search, setSearch] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [question, setQuestion] = useState('');
@@ -284,8 +296,19 @@ function App() {
     timeouts.current.push(id);
   };
   const notify = (text: string) => setToast(text);
-  const navigate = (next: View) => {
+  const cancelDiscovery = () => {
+    discoveryRequest.current += 1;
+    discoveryBusy.current = false;
+    setHomeBusy(null);
+    setGeneratingId(null);
+    setDiscoveryTurns((prev) => prev.map((turn) => turn.result ? turn : {
+      ...turn, result: { kind: 'chat', text: '分析已停止，可以重新发送这条消息。' },
+    }));
+  };
+  const navigate = (next: View, tab: LibraryTab = 'ai') => {
+    cancelDiscovery();
     setView(next);
+    if (next === 'library') setLibraryTab(tab);
     setSheet(null);
     window.scrollTo({ top: 0, behavior: 'instant' });
   };
@@ -304,16 +327,20 @@ function App() {
     }
   }, [state]);
   useEffect(() => {
-    history.replaceState(null, '', `#${view}`);
-  }, [view]);
+    const hash = view === 'library' && libraryTab === 'recipes' ? '#library/recipes' : `#${view}`;
+    history.replaceState(null, '', hash);
+  }, [view, libraryTab]);
   useEffect(() => {
     const onHashChange = () => {
-      const requested = window.location.hash.slice(1) as View;
+      const recipeLibrary = isRecipeLibraryHash(window.location.hash);
+      const requested = recipeLibrary ? 'library' : window.location.hash.slice(1) as View;
       const saved = loadState();
-      const isRootView = ['home', 'library', 'settings', 'recipes'].includes(requested);
+      const isRootView = ['home', 'library', 'settings'].includes(requested);
       const hasGuide = saved.guides.some((g) => g.id === saved.activeId);
       if (isRootView || (hasGuide && ['overview', 'cook', 'finish'].includes(requested))) {
+        cancelDiscovery();
         setView(requested);
+        if (requested === 'library') setLibraryTab(recipeLibrary ? 'recipes' : 'ai');
         setSheet(null);
         setConfirm(null);
         window.scrollTo({ top: 0, behavior: 'instant' });
@@ -337,6 +364,10 @@ function App() {
     chatEnd.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [messages, answering]);
   useEffect(() => {
+    if (view === 'home' && discoveryTurns.length)
+      discoveryLatest.current?.scrollIntoView({ block: 'start', behavior: 'instant' });
+  }, [discoveryTurns, view]);
+  useEffect(() => {
     const expired = state.timers.filter(
       (t) => t.endAt !== null && timerRemaining(t, now) === 0 && !t.notified,
     );
@@ -351,18 +382,10 @@ function App() {
     }
   }, [now, state.timers]);
 
-  function chooseRecipe(recipe: Recipe, text = '') {
+  function chooseRecipe(recipe: Recipe, text = '', source: GuideSource = 'catalog') {
     const next = defaultConditions(recipe);
     next.taste = state.preferences.taste || next.taste;
-    next.allergies = state.preferences.avoidances
-      .split(/[，,、；;\n]/)
-      .map((value) =>
-        value
-          .trim()
-          .replace(/^(?:不吃|不要|不放|忌口[:：]?)/, '')
-          .replace(/过敏$/, ''),
-      )
-      .filter(Boolean);
+    next.allergies = parseAvoidances(state.preferences.avoidances);
     next.cookwares = [...state.preferences.cookware];
     if (next.cookwares.length) next.cookware = next.cookwares.join('、');
     const amount = text.match(/(\d+)\s*(?:克|g)/i);
@@ -373,15 +396,12 @@ function App() {
     }
     if (/不辣|不吃辣|不要辣/.test(text)) next.taste = '不辣';
     if (/清淡|少盐|不.*咸/.test(text)) next.taste += ' 少盐';
-    if (/花生.*过敏|不.*花生/.test(text)) next.allergies.push('花生');
-    if (/鸡蛋.*过敏|不.*鸡蛋/.test(text)) next.allergies.push('鸡蛋');
-    const conflict = recipe.ingredients.find((item) =>
-      next.allergies.some(
-        (avoid) => item.name.includes(avoid) && !['peanuts', 'scallion'].includes(item.id),
-      ),
-    );
+    for (const name of ['花生', '鸡蛋', '牛肉', '鸡肉', '蘑菇', '小葱', '番茄', '土豆']) {
+      if (new RegExp(`${name}.{0,3}过敏|(?:不吃|不要|不放)${name}`).test(text)) next.allergies.push(name);
+    }
+    const conflict = recipeConflict(recipe, state.preferences, text);
     if (conflict) {
-      notify(`这道菜含${conflict.name}，请选择其他菜谱`);
+      notify(conflict);
       return;
     }
     setFinishSignals([]);
@@ -390,31 +410,57 @@ function App() {
     setQuestion('');
     setShowKeyPoints(false);
     const generated = makeGuide(recipe, next);
+    generated.source = source;
     setState((prev) => ({ ...prev, guides: [generated, ...prev.guides], activeId: generated.id }));
     navigate('overview');
+    if (source === 'ai') notify('菜谱已生成，已加入 AI 菜谱');
   }
   function submitPrompt() {
+    if (discoveryBusy.current) return;
     if (!prompt.trim()) {
-      notify('请输入菜名，或打开菜谱大全');
+      notify('说说想吃什么，或输入一个问题');
       return;
     }
-    const recipe =
-      recipes.find((r) => prompt.includes(r.title)) ||
-      (/意面|意大利面/.test(prompt)
-        ? recipes[3]
-        : /咖喱/.test(prompt)
-          ? recipes[4]
-          : /蘑菇|法式/.test(prompt)
-            ? recipes[5]
-            : /鸡丁|鸡胸|鸡肉|宫保/.test(prompt)
-              ? recipes[0]
-              : /番茄|西红柿|炒蛋/.test(prompt)
-                ? recipes[1]
-                : /牛|土豆/.test(prompt)
-                  ? recipes[2]
-                  : null);
-    if (recipe) chooseRecipe(recipe, prompt);
-    else setSheet('recipe-picker');
+    const text = prompt.trim();
+    const id = uid();
+    const request = ++discoveryRequest.current;
+    discoveryBusy.current = true;
+    setDiscoveryTurns((prev) => [...prev, { id, prompt: text }]);
+    setPrompt('');
+    setHomeBusy('analyzing');
+    later(() => {
+      if (request !== discoveryRequest.current) return;
+      const result = discover(text, state.guides, state.preferences);
+      setDiscoveryTurns((prev) => prev.map((turn) => turn.id === id ? { ...turn, result } : turn));
+      discoveryBusy.current = false;
+      setHomeBusy(null);
+    }, 650);
+  }
+  function selectRecommendation(candidate: Recommendation, text: string) {
+    if (discoveryBusy.current) return;
+    // Recheck at selection time: a recipe may have been saved since the recommendation appeared.
+    const saved = findSavedRecipe(candidate.recipe, state.guides);
+    const conflict = recipeConflict(saved?.recipe || candidate.recipe, state.preferences, text, !!saved);
+    if (conflict) {
+      notify(conflict);
+      return;
+    }
+    if (saved) {
+      openGuide(saved);
+      notify('已使用 AI 菜谱中的原版本');
+      return;
+    }
+    const request = ++discoveryRequest.current;
+    discoveryBusy.current = true;
+    setGeneratingId(candidate.recipe.id);
+    setHomeBusy('generating');
+    later(() => {
+      if (request !== discoveryRequest.current) return;
+      discoveryBusy.current = false;
+      setHomeBusy(null);
+      setGeneratingId(null);
+      chooseRecipe(candidate.recipe, text, 'ai');
+    }, 850);
   }
   function openGuide(g: Guide) {
     setState((prev) => ({ ...prev, activeId: g.id }));
@@ -804,6 +850,7 @@ function App() {
             <button
               className="icon-button"
               aria-label="通用设置"
+              disabled={homeBusy !== null}
               onClick={() => {
                 setPreferencesDraft(structuredClone(state.preferences));
                 setSheet('preferences');
@@ -813,12 +860,58 @@ function App() {
             </button>
           </div>
         </header>
-        <main className="home page">
+        <main className={`home page ${discoveryTurns.length ? 'home-conversation' : ''}`}>
           <div className="home-center">
             <section className="prompt-card">
               <h1>
-                <label htmlFor="recipe-prompt">想做什么菜？</label>
+                想做什么菜？
               </h1>
+              {!discoveryTurns.length && <p className="prompt-intro">一道菜、几样食材，或一个想法都可以</p>}
+              {discoveryTurns.length > 0 && (
+                <div className="discovery-conversation" aria-label="做菜灵感对话" aria-busy={homeBusy === 'analyzing'}>
+                  {discoveryTurns.map((turn, index) => (
+                    <div className="discovery-turn" key={turn.id} ref={index === discoveryTurns.length - 1 ? discoveryLatest : undefined}>
+                      <div className="message user"><p>{turn.prompt}</p></div>
+                      <div className="discovery-answer">
+                        <span className="discovery-author"><ChefHat size={18} /> CookPilot</span>
+                        {!turn.result ? (
+                          <p className="discovery-status" role="status"><LoaderCircle size={15} className="spin" />正在理解你的想法…</p>
+                        ) : (
+                          <>
+                            <p className="discovery-summary">{turn.result.text}</p>
+                            {turn.result.kind === 'recipes' && (
+                              <div className="recommendations">
+                                {turn.result.candidates.map((candidate) => {
+                                  const saved = findSavedRecipe(candidate.recipe, state.guides);
+                                  const busy = generatingId === candidate.recipe.id;
+                                  return (
+                                    <article className={`recommendation ${candidate.blocked ? 'unavailable' : ''}`} key={candidate.recipe.id}>
+                                      <div className="recommendation-heading">
+                                        <h2>{candidate.recipe.title}</h2>
+                                        <span className={`recipe-source ${saved ? 'saved' : ''}`}>{saved ? 'AI 菜谱 · 已有' : '新菜谱'}</span>
+                                      </div>
+                                      <p className="recommendation-reason">{candidate.reason}</p>
+                                      <div className="recommendation-meta"><span><Clock3 size={13} />{candidate.recipe.minutes} 分钟</span><span>{candidate.recipe.level}</span></div>
+                                      {candidate.blocked ? <p className="recommendation-warning">{candidate.blocked}</p> : saved && (
+                                        <p className="recommendation-saved-note">沿用 v{saved.version} 的用量与做法，保留原进度</p>
+                                      )}
+                                      <button className="recommendation-select" disabled={!!candidate.blocked || homeBusy !== null}
+                                        aria-label={`${saved ? '使用已有菜谱' : '生成菜谱'}：${candidate.recipe.title}`}
+                                        onClick={() => selectRecommendation(candidate, turn.prompt)}>
+                                        {busy ? <><LoaderCircle size={15} className="spin" />正在生成…</> : <>{saved ? '使用已有菜谱' : '选这道 · 生成菜谱'}<ArrowRight size={15} /></>}
+                                      </button>
+                                    </article>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
               <div className="prompt-input">
                 <textarea
                   id="recipe-prompt"
@@ -826,14 +919,23 @@ function App() {
                   maxLength={300}
                   value={prompt}
                   onChange={(event) => setPrompt(event.target.value)}
-                  placeholder="输入菜名，如宫保鸡丁"
+                  placeholder={discoveryTurns.length ? '换个想法，或继续聊聊…' : '比如：有番茄和鸡蛋，想吃点简单的'}
+                  disabled={homeBusy !== null}
                 />
-                <button className="prompt-submit" onClick={submitPrompt} aria-label="生成烹饪指南">
-                  <ArrowRight size={21} />
+                <button className="prompt-submit" onClick={submitPrompt} aria-label="发送消息" disabled={homeBusy !== null || !prompt.trim()}>
+                  {homeBusy ? <LoaderCircle size={19} className="spin" /> : <ArrowRight size={21} />}
                 </button>
               </div>
+              {!discoveryTurns.length && (
+                <div className="prompt-examples" aria-label="试试这些想法">
+                  {['想做宫保鸡丁', '有番茄和鸡蛋', '想吃点快手的'].map((example) => (
+                    <button key={example} onClick={() => setPrompt(example)}>{example}</button>
+                  ))}
+                </div>
+              )}
+              {homeBusy === 'generating' && <p className="discovery-status" role="status">正在整理食材和步骤，完成后自动加入 AI 菜谱…</p>}
             </section>
-            <button className="catalog-entry" onClick={() => navigate('recipes')}>
+            <button className="catalog-entry" onClick={() => navigate('library', 'recipes')}>
               <BookOpen size={20} />
               <span>菜谱大全</span>
               <ArrowRight size={18} />
@@ -851,56 +953,53 @@ function App() {
         recipe.title.includes(recipeSearch.trim()),
     );
     return (
-      <>
-        {processHeader('菜谱大全', () => navigate('home'))}
-        <main className="page catalog-page">
-          <label className="catalog-search">
-            <Search size={18} />
-            <input
-              aria-label="搜索菜谱"
-              placeholder="搜索菜谱"
-              value={recipeSearch}
-              onChange={(event) => setRecipeSearch(event.target.value)}
-            />
-          </label>
-          <div className="catalog-filters" aria-label="菜谱分类">
-            {['全部', '中式', '西式与日式'].map((category) => (
-              <button
-                key={category}
-                aria-pressed={recipeFilter === category}
-                className={recipeFilter === category ? 'active' : ''}
-                onClick={() => setRecipeFilter(category)}
-              >
-                {category}
-              </button>
-            ))}
-          </div>
-          <div className="catalog-list">
-            {visible.map((recipe) => (
-              <button
-                className="catalog-recipe"
-                key={recipe.id}
-                aria-label={recipe.title}
-                onClick={() => chooseRecipe(recipe)}
-              >
-                <span className="catalog-recipe-icon">
-                  <Utensils size={22} strokeWidth={1.5} />
-                </span>
-                <span>
-                  <b>{recipe.title}</b>
-                  <small>
-                    {recipe.cuisine || '中式'}
-                    <span>·</span>
-                    {recipe.minutes} 分钟
-                  </small>
-                </span>
-                <ChevronRight size={18} />
-              </button>
-            ))}
-            {!visible.length && <p className="catalog-empty">没有找到菜谱</p>}
-          </div>
-        </main>
-      </>
+      <div className="catalog-content">
+        <label className="catalog-search">
+          <Search size={18} />
+          <input
+            aria-label="搜索菜谱"
+            placeholder="搜索菜谱"
+            value={recipeSearch}
+            onChange={(event) => setRecipeSearch(event.target.value)}
+          />
+        </label>
+        <div className="catalog-filters" aria-label="菜谱分类">
+          {['全部', '中式', '西式与日式'].map((category) => (
+            <button
+              key={category}
+              aria-pressed={recipeFilter === category}
+              className={recipeFilter === category ? 'active' : ''}
+              onClick={() => setRecipeFilter(category)}
+            >
+              {category}
+            </button>
+          ))}
+        </div>
+        <div className="catalog-list">
+          {visible.map((recipe) => (
+            <button
+              className="catalog-recipe"
+              key={recipe.id}
+              aria-label={recipe.title}
+              onClick={() => chooseRecipe(recipe)}
+            >
+              <span className="catalog-recipe-icon">
+                <Utensils size={22} strokeWidth={1.5} />
+              </span>
+              <span>
+                <b>{recipe.title}</b>
+                <small>
+                  {recipe.cuisine || '中式'}
+                  <span>·</span>
+                  {recipe.minutes} 分钟
+                </small>
+              </span>
+              <ChevronRight size={18} />
+            </button>
+          ))}
+          {!visible.length && <p className="catalog-empty">没有找到菜谱</p>}
+        </div>
+      </div>
     );
   }
   function processHeader(title: string, back: () => void, right?: ReactNode) {
@@ -920,16 +1019,8 @@ function App() {
     const r = guide.recipe;
     return (
       <>
-        {processHeader(
-          '烹饪指南',
-          () => navigate('home'),
-          <button
-            className={`icon-button ${guide.favorite ? 'favorite' : ''}`}
-            aria-label={guide.favorite ? '取消收藏' : '收藏指南'}
-            onClick={() => updateGuide((g) => ({ ...g, favorite: !g.favorite }))}
-          >
-            <Heart size={20} fill={guide.favorite ? 'currentColor' : 'none'} />
-          </button>,
+        {processHeader('烹饪指南', () =>
+          guide.source === 'catalog' ? navigate('library', 'recipes') : navigate('home'),
         )}
         <main className="overview process-page">
           <div className="overview-body">
@@ -1307,13 +1398,6 @@ function App() {
                 </button>
               ))}
             </div>
-            <button
-              className={`favorite-button ${guide.favorite ? 'is-favorite' : ''}`}
-              onClick={() => updateGuide((g) => ({ ...g, favorite: !g.favorite }))}
-            >
-              <Heart size={18} fill={guide.favorite ? 'currentColor' : 'none'} />
-              {guide.favorite ? '已收藏' : '收藏指南'}
-            </button>
           </section>
         </main>
         <div className="action-dock">
@@ -1329,7 +1413,7 @@ function App() {
                 ...prev,
                 timers: prev.timers.filter((t) => t.guideId !== prev.activeId),
               }));
-              navigate('library');
+              navigate('library', guide.source === 'catalog' ? 'recipes' : 'ai');
               notify('已保存');
             }}
           >
@@ -1347,11 +1431,8 @@ function App() {
     );
   }
   function renderLibrary() {
-    const filtered = state.guides.filter(
-      (g) =>
-        (libraryFilter === '全部' || (libraryFilter === '收藏' && g.favorite)) &&
-        g.recipe.title.includes(search),
-    );
+    const aiGuides = state.guides.filter((g) => g.source === 'ai');
+    const filtered = aiGuides.filter((g) => g.recipe.title.includes(search.trim()));
     return (
       <>
         <header className="root-header">
@@ -1368,121 +1449,113 @@ function App() {
           </button>
         </header>
         <main className="page library-page">
-          <label className="search-field">
-            <Search size={18} />
-            <input
-              aria-label="搜索我的指南"
-              placeholder="搜索菜名"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            {search && (
-              <button className="icon-button" aria-label="清空搜索" onClick={() => setSearch('')}>
-                <X size={16} />
-              </button>
-            )}
-          </label>
-          <div className="library-tabs">
-            {['全部', '收藏'].map((tab) => (
+          <div className="library-tabs" role="tablist" aria-label="指南分类">
+            {([
+              { key: 'ai', label: 'AI 菜谱', count: aiGuides.length },
+              { key: 'recipes', label: '菜谱大全', count: recipes.length },
+            ] as const).map((tab) => (
               <button
-                className={libraryFilter === tab ? 'active' : ''}
-                key={tab}
-                onClick={() => setLibraryFilter(tab)}
+                role="tab"
+                id={`library-tab-${tab.key}`}
+                aria-selected={libraryTab === tab.key}
+                aria-controls={`library-panel-${tab.key}`}
+                className={libraryTab === tab.key ? 'active' : ''}
+                key={tab.key}
+                onClick={() => {
+                  setLibraryTab(tab.key);
+                  window.scrollTo({ top: 0, behavior: 'instant' });
+                }}
               >
-                {tab}
-                <span>
-                  {
-                    state.guides.filter(
-                      (g) =>
-                        tab === '全部' ||
-                        (tab === '收藏' && g.favorite),
-                    ).length
-                  }
-                </span>
+                {tab.label}<span>{tab.count}</span>
               </button>
             ))}
           </div>
-          <div className="guide-list">
-            {filtered.map((g) => (
-              <article className="guide-card" key={g.id}>
-                <button className="guide-main" onClick={() => openGuide(g)}>
-                  {g.recipe.image ? (
-                    <img src={g.recipe.image} alt={g.recipe.title} />
-                  ) : (
-                    <div className="saved-dish-icon">
-                      <Utensils size={26} strokeWidth={1.5} />
-                    </div>
+          <div
+            role="tabpanel"
+            id={`library-panel-${libraryTab}`}
+            aria-labelledby={`library-tab-${libraryTab}`}
+          >
+            {libraryTab === 'recipes' ? (
+              renderRecipes()
+            ) : (
+              <>
+                <label className="search-field">
+                  <Search size={18} />
+                  <input
+                    aria-label="搜索我的指南"
+                    placeholder="搜索菜名"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                  {search && (
+                    <button className="icon-button" aria-label="清空搜索" onClick={() => setSearch('')}>
+                      <X size={16} />
+                    </button>
                   )}
-                  <div>
-                    <span className="guide-status">
-                      {g.status === 'finished' ? '已完成' : '已保存'}
-                    </span>
-                    <h2>{g.recipe.title}</h2>
-                    <p>
-                      {g.conditions.servings} 人份<span>·</span>
-                      {g.conditions.taste}
-                      <span>·</span>
-                      {g.recipe.minutes} 分钟
-                    </p>
-                    {g.note && <small className="guide-note">“{g.note}”</small>}
-                  </div>
-                </button>
-                <div className="guide-card-bottom">
-                  <button
-                    aria-label={g.favorite ? `取消收藏${g.recipe.title}` : `收藏${g.recipe.title}`}
-                    className={g.favorite ? 'favorite' : ''}
-                    onClick={() =>
-                      setState((prev) => ({
-                        ...prev,
-                        guides: prev.guides.map((item) =>
-                          item.id === g.id ? { ...item, favorite: !item.favorite } : item,
-                        ),
-                      }))
-                    }
-                  >
-                    <Heart size={15} fill={g.favorite ? 'currentColor' : 'none'} />
-                    {g.favorite ? '已收藏' : '收藏'}
-                  </button>
-                  <span>v{g.version}</span>
-                  <button
-                    className="guide-repeat"
-                    onClick={() =>
-                      g.status === 'ready' ? openGuide(g) : repeatGuide(g)
-                    }
-                  >
-                    {g.status === 'ready' ? '查看指南' : '再做一次'}
-                    <ArrowRight size={14} />
-                  </button>
-                  <button
-                    className="icon-button guide-delete"
-                    aria-label={`删除${g.recipe.title}`}
-                    onClick={() => deleteGuide(g)}
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                </label>
+                <div className="guide-list">
+                  {filtered.map((g) => (
+                    <article className="guide-card" key={g.id}>
+                      <button className="guide-main" onClick={() => openGuide(g)}>
+                        {g.recipe.image ? (
+                          <img src={g.recipe.image} alt={g.recipe.title} />
+                        ) : (
+                          <div className="saved-dish-icon">
+                            <Utensils size={26} strokeWidth={1.5} />
+                          </div>
+                        )}
+                        <div>
+                          <span className="guide-status">
+                            {g.status === 'finished' ? '已完成' : '已保存'}
+                          </span>
+                          <h2>{g.recipe.title}</h2>
+                          <p>
+                            {g.conditions.servings} 人份<span>·</span>
+                            {g.conditions.taste}
+                            <span>·</span>
+                            {g.recipe.minutes} 分钟
+                          </p>
+                          {g.note && <small className="guide-note">“{g.note}”</small>}
+                        </div>
+                      </button>
+                      <div className="guide-card-bottom">
+                        <span>v{g.version}</span>
+                        <button
+                          className="guide-repeat"
+                          onClick={() =>
+                            g.status === 'ready' ? openGuide(g) : repeatGuide(g)
+                          }
+                        >
+                          {g.status === 'ready' ? '查看指南' : '再做一次'}
+                          <ArrowRight size={14} />
+                        </button>
+                        <button
+                          className="icon-button guide-delete"
+                          aria-label={`删除${g.recipe.title}`}
+                          onClick={() => deleteGuide(g)}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </article>
+                  ))}
                 </div>
-              </article>
-            ))}
+                {!filtered.length && (
+                  <div className="empty-state">
+                    <BookOpen size={37} />
+                    <h3>{search ? '未找到菜谱' : '暂无指南'}</h3>
+                    <button
+                      className="secondary-button"
+                      onClick={() => (search ? setSearch('') : navigate('home'))}
+                    >
+                      {search ? '清空搜索' : '去做一道菜'}
+                      <ArrowRight size={16} />
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
           </div>
-          {!filtered.length && (
-            <div className="empty-state">
-              <BookOpen size={37} />
-              <h3>
-                {search
-                  ? '未找到菜谱'
-                  : libraryFilter === '收藏'
-                    ? '暂无收藏'
-                    : '暂无指南'}
-              </h3>
-              <button
-                className="secondary-button"
-                onClick={() => (search ? setSearch('') : navigate('home'))}
-              >
-                {search ? '清空搜索' : '去做一道菜'}
-                <ArrowRight size={16} />
-              </button>
-            </div>
-          )}
         </main>
       </>
     );
@@ -1718,7 +1791,6 @@ function App() {
           </div>
         )}
         {view === 'home' && renderHome()}
-        {view === 'recipes' && renderRecipes()}
         {view === 'overview' && renderOverview()}
         {view === 'cook' && renderCook()}
         {view === 'finish' && renderFinish()}
@@ -1839,26 +1911,6 @@ function App() {
               保存设置
             </button>
           </form>
-        </Sheet>
-      )}
-      {sheet === 'recipe-picker' && (
-        <Sheet title="选择菜谱" subtitle="请选择一道菜谱" onClose={() => setSheet(null)}>
-          <div className="picker-list">
-            {recipes.map((r) => (
-              <button key={r.id} onClick={() => chooseRecipe(r, prompt)}>
-                <span className="catalog-recipe-icon">
-                  <Utensils size={22} />
-                </span>
-                <span>
-                  <b>{r.title}</b>
-                  <small>
-                    {r.minutes} 分钟 · {r.level}
-                  </small>
-                </span>
-                <ArrowRight size={18} />
-              </button>
-            ))}
-          </div>
         </Sheet>
       )}
       {sheet === 'steps' && guide && (
@@ -2172,9 +2224,6 @@ function App() {
               <b>{state.guides.length}</b>份指南
             </span>
             <span>
-              <b>{state.guides.filter((g) => g.favorite).length}</b>份收藏
-            </span>
-            <span>
               <b>{state.models.length}</b>套配置
             </span>
           </div>
@@ -2209,7 +2258,7 @@ function App() {
                 setConfirm({
                   title: '清除这台设备上的全部数据？',
                   description:
-                    '将删除全部指南、收藏、复盘、计时器和模型配置（含 API Key），无法撤销。',
+                    '将删除全部指南、复盘、计时器和模型配置（含 API Key），无法撤销。',
                   label: '清除全部数据',
                   action: () => {
                     setState({

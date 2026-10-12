@@ -1,5 +1,6 @@
 export type RecipeId = 'chicken' | 'eggs' | 'beef' | 'pasta' | 'curry' | 'omelette';
-export type View = 'home' | 'recipes' | 'overview' | 'cook' | 'finish' | 'library' | 'settings';
+export type View = 'home' | 'overview' | 'cook' | 'finish' | 'library' | 'settings';
+export type GuideSource = 'ai' | 'catalog';
 export type Conditions = {
   servings: number;
   amount: number;
@@ -61,7 +62,7 @@ export type Guide = {
   currentStep: number;
   completed: string[];
   status: 'ready' | 'cooking' | 'finished';
-  favorite: boolean;
+  source: GuideSource;
   note: string;
   rating: number;
   createdAt: string;
@@ -821,7 +822,7 @@ export function makeGuide(recipe: Recipe, conditions: Conditions): Guide {
     currentStep: 0,
     completed: [],
     status: 'ready',
-    favorite: false,
+    source: 'ai',
     note: '',
     rating: 0,
     createdAt: new Date().toISOString(),
@@ -833,14 +834,12 @@ export function makeGuide(recipe: Recipe, conditions: Conditions): Guide {
 export const STORAGE_KEY = 'cookpilot.demo.v1';
 export function initialState(): State {
   const chicken = makeGuide(recipes[0], defaultConditions(recipes[0]));
-  chicken.favorite = true;
   const eggs = makeGuide(recipes[1], defaultConditions(recipes[1]));
   eggs.status = 'finished';
   eggs.completed = eggs.recipe.steps.map((s) => s.id);
   eggs.checked = eggs.recipe.prep.map((p) => p.id);
   eggs.rating = 5;
   eggs.note = '番茄炒久一点，汤汁拌饭刚刚好。';
-  eggs.favorite = true;
   return {
     guides: [chicken, eggs],
     activeId: null,
@@ -910,31 +909,35 @@ export function loadState(): State {
         return {
           ...value,
           preferences: { ...defaultPreferences(), ...value.preferences },
-          guides: value.guides.map((g: Guide) => ({
-            ...g,
-            recipe: {
-              ...g.recipe,
-              prep: g.recipe.prep.map((p) => ({
-                ...p,
-                title:
-                  g.recipe.id === 'chicken' &&
-                  p.id === 'tools' &&
-                  g.conditions.allergies.includes('花生')
-                    ? '准备餐具'
-                    : conciseLabel(p.title),
-              })),
-              steps: g.recipe.steps.map((s) => ({ ...s, title: conciseLabel(s.title) })),
-              signals: g.recipe.signals.map((s) => ({
-                ...s,
-                title:
-                  g.recipe.id === 'chicken' &&
-                  g.conditions.allergies.includes('花生') &&
-                  conciseLabel(s.title) === '鸡肉嫩、花生脆'
-                    ? '鸡肉鲜嫩'
-                    : conciseLabel(s.title),
-              })),
-            },
-          })),
+          guides: value.guides.map((saved: Guide & { favorite?: boolean }) => {
+            const { favorite: _removed, ...g } = saved;
+            return {
+              ...g,
+              source: g.source === 'catalog' ? 'catalog' : 'ai',
+              recipe: {
+                ...g.recipe,
+                prep: g.recipe.prep.map((p) => ({
+                  ...p,
+                  title:
+                    g.recipe.id === 'chicken' &&
+                    p.id === 'tools' &&
+                    g.conditions.allergies.includes('花生')
+                      ? '准备餐具'
+                      : conciseLabel(p.title),
+                })),
+                steps: g.recipe.steps.map((s) => ({ ...s, title: conciseLabel(s.title) })),
+                signals: g.recipe.signals.map((s) => ({
+                  ...s,
+                  title:
+                    g.recipe.id === 'chicken' &&
+                    g.conditions.allergies.includes('花生') &&
+                    conciseLabel(s.title) === '鸡肉嫩、花生脆'
+                      ? '鸡肉鲜嫩'
+                      : conciseLabel(s.title),
+                })),
+              },
+            };
+          }),
           timers: value.timers.map((t: Timer) => {
             const recipe = value.guides.find((g: Guide) => g.id === t.guideId)?.recipe as
               | Recipe
