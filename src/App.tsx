@@ -33,7 +33,6 @@ import {
   Trash2,
   Utensils,
   X,
-  Zap,
 } from 'lucide-react';
 import type { Guide, GuideSource, Model, Preferences, Recipe, State, Step, Timer, View } from './data';
 import { discover, findSavedRecipe, parseAvoidances, recipeConflict } from './discovery';
@@ -166,6 +165,61 @@ function StepCarousel({
         </article>
       ))}
     </div>
+  );
+}
+
+function StepNavigation({ guide, onSelect }: { guide: Guide; onSelect: (index: number) => void }) {
+  const navigation = useRef<HTMLElement>(null);
+  const selected = useRef(guide.currentCard);
+  selected.current = guide.currentCard;
+
+  const center = (behavior: ScrollBehavior) => {
+    const element = navigation.current;
+    const button = element?.children[selected.current] as HTMLElement | undefined;
+    if (!element || !button) return;
+    const viewport = element.getBoundingClientRect();
+    const target = button.getBoundingClientRect();
+    element.scrollTo({
+      left: element.scrollLeft + target.left - viewport.left + (target.width - viewport.width) / 2,
+      behavior,
+    });
+  };
+
+  useEffect(() => {
+    const element = navigation.current;
+    if (!element) return;
+    const observer = new ResizeObserver(() => center('instant'));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    center(window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth');
+  }, [guide.id, guide.currentCard]);
+
+  return (
+    <nav ref={navigation} className="card-pagination" aria-label="跳转步骤">
+      <button
+        aria-label="跳转准备卡片"
+        aria-current={guide.currentCard === 0 ? 'step' : undefined}
+        className={guide.currentCard === 0 ? 'active' : ''}
+        onClick={() => onSelect(0)}
+      >
+        准备
+      </button>
+      {guide.recipe.steps.map((step, index) => (
+        <button
+          key={step.id}
+          aria-label={`跳转第 ${index + 1} 步`}
+          aria-current={guide.currentCard === index + 1 ? 'step' : undefined}
+          className={`${guide.currentCard === index + 1 ? 'active' : ''} ${guide.completed.includes(step.id) ? 'done' : ''}`}
+          onClick={() => onSelect(index + 1)}
+        >
+          <span className="step-tab-number">{index + 1}</span>
+          <span>{step.title}</span>
+        </button>
+      ))}
+    </nav>
   );
 }
 
@@ -1086,7 +1140,6 @@ function App() {
     const r = guide.recipe;
     return (
       <>
-        <div className="step-number">开始之前</div>
         <h1>{r.title}</h1>
         <section className="preparation-key">
           <h2>要点</h2>
@@ -1175,7 +1228,6 @@ function App() {
   function renderCook() {
     if (!guide || !currentStep) return null;
     const r = guide.recipe;
-    const index = guide.currentCard;
     const selectStep = (selected: number) => updateGuide((g) => ({
       ...g,
       currentCard: selected,
@@ -1203,20 +1255,19 @@ function App() {
               <TimerIcon size={17} />
               计时器{state.timers.length > 0 && <small>{state.timers.length}</small>}
             </button>
+            <button aria-label="查看全部步骤" onClick={() => setSheet('steps')}>
+              <Layers size={17} />
+            </button>
           </div>,
         )}
         <main className="cards-main">
           <StepCarousel guide={guide} onSelect={selectStep} preparation={renderPreparation()}>
-            {(step, stepIndex) => {
+            {(step) => {
               const stepTimers = state.timers.filter(
                 (timer) => timer.guideId === guide.id && timer.stepId === step.id,
               );
               return (
                 <>
-                  <div className="step-number">
-                    第 {stepIndex + 1} 步
-                    <span>{guide.completed.includes(step.id) ? '已完成' : ''}</span>
-                  </div>
                   <h1>{step.title}</h1>
                   <div className="step-meta">
                     {step.heat && (
@@ -1245,60 +1296,18 @@ function App() {
                   </div>
                   <p className="step-action">{step.action}</p>
                   {step.uses.length > 0 && (
-                    <section className="step-ingredients">
-                      <h3>本步用量</h3>
+                    <section className="step-ingredients" aria-label="本步用量">
                       {ingredients(step.uses, true, undefined, step)}
                     </section>
                   )}
-                  <div className="signal-card">
-                    <span className="signal-icon">
-                      <Eye size={20} />
-                    </span>
-                    <div>
-                      <b>完成标准</b>
-                      <p>{step.signal}</p>
-                    </div>
-                  </div>
+                  {step.signal && <div className="signal-card" aria-label="完成标准"><p>{step.signal}</p></div>}
                   {stepTimers.map((timer) => renderTimer(timer, true))}
-                  <div className="step-tip">
-                    <Zap size={16} />
-                    <p>{step.tip}</p>
-                  </div>
-                  <details className="detail-disclosure">
-                    <summary>
-                      为什么这样做？
-                      <ChevronDown size={16} />
-                    </summary>
-                    <p>{step.why}</p>
-                  </details>
+                  {step.tip && <p className="step-tip">{step.tip}</p>}
                 </>
               );
             }}
           </StepCarousel>
-          <nav className="card-pagination" aria-label="跳转步骤">
-            <button
-              aria-label="跳转准备卡片"
-              aria-current={index === 0 ? 'step' : undefined}
-              className={index === 0 ? 'active preparation-tab' : 'preparation-tab'}
-              onClick={() => selectStep(0)}
-            >
-              准备
-            </button>
-            {r.steps.map((step, stepIndex) => (
-              <button
-                key={step.id}
-                aria-label={`跳转第 ${stepIndex + 1} 步`}
-                aria-current={index === stepIndex + 1 ? 'step' : undefined}
-                className={`${index === stepIndex + 1 ? 'active' : ''} ${guide.completed.includes(step.id) ? 'done' : ''}`}
-                onClick={() => selectStep(stepIndex + 1)}
-              >
-                {stepIndex + 1}
-              </button>
-            ))}
-            <button aria-label="查看全部步骤" onClick={() => setSheet('steps')}>
-              <Layers size={17} />
-            </button>
-          </nav>
+          <StepNavigation guide={guide} onSelect={selectStep} />
         </main>
       </div>
     );

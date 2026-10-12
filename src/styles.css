@@ -1018,17 +1018,6 @@ textarea {
   background: var(--green);
 }
 
-.step-number {
-  display: flex;
-  justify-content: space-between;
-  color: var(--green);
-  font-size: 12px;
-}
-
-.step-number > span {
-  color: var(--muted);
-}
-
 .current-step h1 {
   margin-top: 12px;
   font-size: 27px;
@@ -3035,6 +3024,7 @@ textarea {
   grid-template-rows: minmax(0, 1fr) 64px;
   flex: 1;
   min-height: 0;
+  min-width: 0;
   padding-top: 16px;
   padding-bottom: env(safe-area-inset-bottom);
 }
@@ -3084,39 +3074,43 @@ textarea {
   scrollbar-color: #cbd8ce transparent;
 }
 .step-card h1 {
-  margin: 14px 0 20px;
+  margin: 0 0 18px;
   font-size: 25px;
   line-height: 1.45;
   letter-spacing: -0.6px;
 }
 .step-card .step-action {
   font-size: 15px;
-  line-height: 1.95;
-  margin-top: 22px;
+  line-height: 1.8;
+  margin-top: 18px;
 }
 .step-card .step-meta {
   gap: 8px;
   flex-wrap: wrap;
 }
-.step-card .step-number {
-  color: var(--green);
-}
 .step-card .step-ingredients {
-  margin-top: 24px;
+  margin-top: 16px;
+}
+.step-card .step-ingredients .ingredient-pills {
+  margin-top: 0;
 }
 .step-card .ingredient-pills > span {
   padding: 7px 9px;
   font-size: 11px;
 }
 .step-card .signal-card {
-  margin-top: 24px;
+  margin-top: 20px;
   padding: 14px 12px;
 }
 .step-card .signal-card p {
+  margin-top: 0;
   font-size: 12px;
 }
 .step-card .step-tip {
-  margin-top: 22px;
+  display: block;
+  margin-top: 16px;
+  font-size: 12px;
+  line-height: 1.8;
 }
 .step-card .detail-disclosure {
   margin-bottom: 0;
@@ -3124,21 +3118,35 @@ textarea {
 .card-pagination {
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 7px;
+  min-width: 0;
   padding: 13px 20px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.card-pagination::-webkit-scrollbar {
+  display: none;
 }
 .card-pagination button {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 38px;
+  flex: 0 0 auto;
+  gap: 6px;
+  padding: 0 12px;
+  min-width: 44px;
   height: 38px;
   border-radius: 11px;
   color: var(--muted);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.step-tab-number {
+  font-weight: 600;
 }
 .card-pagination button.active {
   color: #fff;
@@ -3204,20 +3212,6 @@ textarea {
 }
 .preparation-card .ingredients-section {
   margin-top: 18px;
-}
-.card-pagination {
-  gap: 3px;
-  padding-left: 12px;
-  padding-right: 12px;
-  overflow-x: auto;
-}
-.card-pagination button {
-  flex: 0 0 34px;
-  width: 34px;
-}
-.card-pagination .preparation-tab {
-  flex-basis: 42px;
-  font-size: 12px;
 }
 .cards-header-actions button {
   padding: 0 4px;

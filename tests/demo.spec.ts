@@ -398,6 +398,44 @@ test('指南直接进入准备卡片，内容顺序固定，不展示器具或�
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
+test('步骤名称导航可横向滚动，当前步骤居中且卡片只保留烹饪信息', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await generateChicken(page);
+  const navigation = page.getByRole('navigation', { name: '跳转步骤' });
+  const original = (await stored(page)).guides[0];
+  await expect(navigation.getByRole('button')).toHaveText([
+    '准备', ...original.recipe.steps.map((step: any, index: number) => `${index + 1}${step.title}`),
+  ]);
+  await expect(navigation.getByRole('button', { name: '查看全部步骤' })).toHaveCount(0);
+  for (const width of [320, 390, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.getByRole('button', { name: '跳转第 3 步', exact: true }).click();
+    await expect.poll(() => navigation.evaluate((element) => {
+      const viewport = element.getBoundingClientRect();
+      const active = element.querySelector('[aria-current="step"]')!.getBoundingClientRect();
+      return Math.abs(active.left + active.width / 2 - viewport.left - viewport.width / 2);
+    })).toBeLessThan(2);
+    expect(await navigation.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    const active = page.locator('.step-card.active');
+    await expect(active.locator('.step-number, .signal-icon, .detail-disclosure')).toHaveCount(0);
+    await expect(active).not.toContainText('本步用量');
+    await expect(active).not.toContainText('完成标准');
+    await expect(active.locator('.step-action')).toHaveText(original.recipe.steps[2].action);
+    const timer = await page.getByRole('button', { name: '查看厨房计时器' }).boundingBox();
+    const allSteps = await page.getByRole('button', { name: '查看全部步骤' }).boundingBox();
+    expect(allSteps!.x).toBeGreaterThanOrEqual(timer!.x + timer!.width);
+    if (width === 390)
+      await page.screenshot({ path: '.local/step-navigation-mobile.png', animations: 'disabled' });
+    // Browsing the strip does not select a different card; changing cards recenters it.
+    await navigation.evaluate((element) => { element.scrollLeft = 0; });
+    await expect(active.locator('h1')).toHaveText(original.recipe.steps[2].title);
+    await page.locator('.step-carousel').focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(navigation.locator('[aria-current="step"]')).toHaveText(`4${original.recipe.steps[3].title}`);
+  }
+});
+
 test('心得在问问 AI 左侧，可编辑保存、取消、清空，刷新与再次制作隔离', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('textbox', { name: '描述做菜需求' }).fill('番茄炒蛋');
@@ -405,7 +443,7 @@ test('心得在问问 AI 左侧，可编辑保存、取消、清空，刷新与�
   const before = (await stored(page)).guides.find((g: any) => g.recipe.id === 'eggs');
   expect(await page.locator('.cards-header-actions > button').evaluateAll((buttons) =>
     buttons.map((button) => button.getAttribute('aria-label')),
-  )).toEqual(['心得', '问问 AI', '查看厨房计时器']);
+  )).toEqual(['心得', '问问 AI', '查看厨房计时器', '查看全部步骤']);
   await page.getByRole('button', { name: '心得', exact: true }).click();
   await expect(page.getByLabel('我的记录')).toHaveValue(before.note);
   await page.getByLabel('我的记录').fill('记'.repeat(2001));
@@ -513,6 +551,7 @@ test('步骤卡片触摸双向滑动、数字跳转、键盘切换、独立滚�
   await page.getByRole('button', { name: '跳转第 3 步' }).click();
   await expect(active.locator('h1')).toHaveText('小火炒香配料');
   expect((await stored(page)).guides[0].completed).toEqual([]);
+  await page.setViewportSize({ width: 390, height: 480 });
   const box = await active.boundingBox();
   await page.mouse.move(box!.x + 140, box!.y + 150);
   await page.mouse.wheel(0, 600);
@@ -520,6 +559,7 @@ test('步骤卡片触摸双向滑动、数字跳转、键盘切换、独立滚�
     .poll(() => active.locator('.step-card-scroll').evaluate((element) => element.scrollTop))
     .toBeGreaterThan(0);
   expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  await page.setViewportSize({ width: 390, height: 640 });
   await page.locator('.step-carousel').focus();
   await page.keyboard.press('ArrowRight');
   await expect(active.locator('h1')).toHaveText('鸡丁回锅调味');
@@ -559,7 +599,7 @@ test('步骤卡片触摸双向滑动、数字跳转、键盘切换、独立滚�
   await cdp.detach();
 });
 
-test('卡片与心得在窄屏和大屏可用，操作按钮及数字栏不溢出', async ({ page }) => {
+test('卡片与心得在窄屏和大屏可用，操作按钮及步骤导航不撑宽页面', async ({ page }) => {
   await generateChicken(page);
   for (const width of [320, 390, 480, 1440]) {
     await page.setViewportSize({ width, height: 844 });
@@ -568,11 +608,11 @@ test('卡片与心得在窄屏和大屏可用，操作按钮及数字栏不溢�
       const header = document.querySelector('.cards-header-actions')!.getBoundingClientRect();
       const title = document.querySelector('.process-header > span')!.getBoundingClientRect();
       const app = document.querySelector('.app')!.getBoundingClientRect();
-      const navigation = document.querySelector('.card-pagination')!;
+      const navigation = document.querySelector('.card-pagination')!.getBoundingClientRect();
       return {
         pageFits: document.documentElement.scrollWidth <= innerWidth,
         headerFits: header.right <= app.right && title.right <= header.left,
-        navigationFits: navigation.scrollWidth <= navigation.clientWidth,
+        navigationFits: navigation.left >= app.left && navigation.right <= app.right,
       };
     });
     expect(layout).toEqual({ pageFits: true, headerFits: true, navigationFits: true });
