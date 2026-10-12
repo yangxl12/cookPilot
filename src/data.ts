@@ -1,3 +1,6 @@
+import { createDemoConversations, retainConversations } from './conversations';
+import type { Conversation } from './conversations';
+
 export type RecipeId = 'chicken' | 'eggs' | 'beef' | 'pasta' | 'curry' | 'omelette';
 export type View = 'home' | 'cook' | 'library' | 'settings';
 export type GuideSource = 'ai' | 'catalog';
@@ -87,6 +90,8 @@ export type State = {
   models: Model[];
   modelId: string;
   preferences: Preferences;
+  conversations: Conversation[];
+  activeConversationId: string | null;
 };
 export type Preferences = { avoidances: string; taste: string; cookware: string[] };
 export const defaultPreferences = (): Preferences => ({ avoidances: '', taste: '', cookware: [] });
@@ -824,6 +829,8 @@ export function initialState(): State {
     ],
     modelId: 'deepseek',
     preferences: defaultPreferences(),
+    conversations: createDemoConversations(),
+    activeConversationId: null,
   };
 }
 // Keep saved progress and adjusted instructions while shortening legacy labels.
@@ -859,10 +866,20 @@ export function loadState(): State {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const value = JSON.parse(raw);
-      if (Array.isArray(value.guides) && Array.isArray(value.models) && Array.isArray(value.timers))
+      if (Array.isArray(value.guides) && Array.isArray(value.models) && Array.isArray(value.timers)) {
+        const conversations = retainConversations(Array.isArray(value.conversations)
+          ? value.conversations : createDemoConversations()).map((conversation) => ({
+            ...conversation,
+            turns: conversation.turns.map((turn) => turn.result ? turn : {
+              ...turn, result: { kind: 'chat' as const, text: '分析已停止，可以重新发送这条消息。' },
+            }),
+          }));
         return {
           ...value,
           preferences: { ...defaultPreferences(), ...value.preferences },
+          conversations,
+          activeConversationId: conversations.some((c) => c.id === value.activeConversationId)
+            ? value.activeConversationId : null,
           guides: value.guides.map((saved: Guide & { favorite?: boolean; rating?: number }) => {
             const { favorite: _removed, rating: _removedRating, ...g } = saved;
             const { signals: _removedSignals, ...recipe } = g.recipe as Recipe & { signals?: unknown };
@@ -901,6 +918,7 @@ export function loadState(): State {
             return source ? { ...t, name: conciseLabel(t.name) } : t;
           }),
         };
+      }
     }
   } catch {
     /* Storage may be unavailable; continue with a fresh demo. */

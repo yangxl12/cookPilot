@@ -17,7 +17,9 @@ import {
   Flame,
   Layers,
   LoaderCircle,
+  Menu,
   MessageCircle,
+  MessageSquarePlus,
   Pause,
   Play,
   Plus,
@@ -37,6 +39,7 @@ import {
 import type { Guide, GuideSource, Model, Preferences, Recipe, State, Step, Timer, View } from './data';
 import { discover, findSavedRecipe, parseAvoidances, recipeConflict } from './discovery';
 import type { DiscoveryTurn, Recommendation } from './discovery';
+import { historyGroup, retainConversations } from './conversations';
 import {
   defaultConditions,
   defaultPreferences,
@@ -218,7 +221,7 @@ function Sheet({
     };
   }, []);
   return (
-    <div className="sheet-overlay" onClick={onClose}>
+    <div className={`sheet-overlay ${className === 'navigation-drawer' ? 'navigation-overlay' : ''}`} onClick={onClose}>
       <div
         ref={ref}
         tabIndex={-1}
@@ -259,7 +262,18 @@ function App() {
   });
   const [preferencesDraft, setPreferencesDraft] = useState<Preferences>(state.preferences);
   const [prompt, setPrompt] = useState('');
-  const [discoveryTurns, setDiscoveryTurns] = useState<DiscoveryTurn[]>([]);
+  const discoveryTurns = state.conversations.find((c) => c.id === state.activeConversationId)?.turns ?? [];
+  const setDiscoveryTurns = (updater: (turns: DiscoveryTurn[]) => DiscoveryTurn[]) =>
+    setState((prev) => {
+      const active = prev.conversations.find((c) => c.id === prev.activeConversationId);
+      if (!active) return prev;
+      const turns = updater(active.turns);
+      if (turns === active.turns) return prev;
+      return {
+        ...prev,
+        conversations: prev.conversations.map((c) => c.id === active.id ? { ...c, turns } : c),
+      };
+    });
   const [homeBusy, setHomeBusy] = useState<'analyzing' | 'generating' | null>(null);
   const [generatingId, setGeneratingId] = useState<string | null>(null);
   const discoveryRequest = useRef(0);
@@ -270,6 +284,7 @@ function App() {
   const [now, setNow] = useState(Date.now());
   const [noteDraft, setNoteDraft] = useState('');
   const notesButton = useRef<HTMLButtonElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
   const [recipeFilter, setRecipeFilter] = useState('全部');
   const [recipeSearch, setRecipeSearch] = useState('');
   const [libraryTab, setLibraryTab] = useState<LibraryTab>(() =>
@@ -304,6 +319,9 @@ function App() {
   const runningTimers = state.timers.filter((t) => t.endAt !== null && timerRemaining(t, now) > 0);
   const isRoot = ['home', 'library', 'settings'].includes(view);
   const sheet = confirm ? null : requestedSheet;
+  const historyMinute = Math.floor(now / 60000);
+  const conversations = retainConversations(state.conversations, now)
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
 
   const later = (callback: () => void, ms: number) => {
     const id = setTimeout(callback, ms);
@@ -315,9 +333,9 @@ function App() {
     discoveryBusy.current = false;
     setHomeBusy(null);
     setGeneratingId(null);
-    setDiscoveryTurns((prev) => prev.map((turn) => turn.result ? turn : {
+    setDiscoveryTurns((prev) => prev.some((turn) => !turn.result) ? prev.map((turn) => turn.result ? turn : {
       ...turn, result: { kind: 'chat', text: '分析已停止，可以重新发送这条消息。' },
-    }));
+    }) : prev);
   };
   const navigate = (next: View, tab: LibraryTab = 'ai') => {
     cancelDiscovery();
@@ -326,6 +344,22 @@ function App() {
     setSheet(null);
     window.scrollTo({ top: 0, behavior: 'instant' });
   };
+  const newConversation = () => {
+    navigate('home');
+    setState((prev) => ({ ...prev, activeConversationId: null }));
+    setPrompt('');
+  };
+  const openConversation = (id: string) => {
+    navigate('home');
+    setState((prev) => ({ ...prev, activeConversationId: id }));
+    setPrompt('');
+  };
+  const menuButton = (
+    <button ref={menuButtonRef} className="icon-button menu-button" aria-label="菜单" title="菜单" aria-haspopup="dialog"
+      aria-expanded={sheet === 'navigation'} onClick={() => setSheet('navigation')}>
+      <Menu size={21} />
+    </button>
+  );
   const updateGuide = (updater: (g: Guide) => Guide) =>
     setState((prev) => ({
       ...prev,
@@ -344,6 +378,18 @@ function App() {
     const hash = view === 'library' && libraryTab === 'recipes' ? '#library/recipes' : `#${view}`;
     history.replaceState(null, '', hash);
   }, [view, libraryTab]);
+  useEffect(() => {
+    setState((prev) => {
+      const retained = retainConversations(prev.conversations);
+      if (retained.length === prev.conversations.length) return prev;
+      return {
+        ...prev,
+        conversations: retained,
+        activeConversationId: retained.some((c) => c.id === prev.activeConversationId)
+          ? prev.activeConversationId : null,
+      };
+    });
+  }, [historyMinute]);
   useEffect(() => {
     const onHashChange = () => {
       const recipeLibrary = isRecipeLibraryHash(window.location.hash);
@@ -445,7 +491,19 @@ function App() {
     const id = uid();
     const request = ++discoveryRequest.current;
     discoveryBusy.current = true;
-    setDiscoveryTurns((prev) => [...prev, { id, prompt: text }]);
+    setState((prev) => {
+      const date = new Date().toISOString();
+      const active = prev.conversations.find((c) => c.id === prev.activeConversationId);
+      const conversationId = active?.id ?? uid();
+      return {
+        ...prev,
+        activeConversationId: conversationId,
+        conversations: active ? prev.conversations.map((c) => c.id === active.id
+          ? { ...c, updatedAt: date, turns: [...c.turns, { id, prompt: text }] } : c)
+          : [{ id: conversationId, title: text.slice(0, 28), createdAt: date,
+            updatedAt: date, turns: [{ id, prompt: text }] }, ...prev.conversations],
+      };
+    });
     setPrompt('');
     setHomeBusy('analyzing');
     later(() => {
@@ -848,22 +906,28 @@ function App() {
     return (
       <>
         <header className="home-header">
-          <a
-            className="brand"
-            href="#home"
-            onClick={(event) => {
-              event.preventDefault();
-              navigate('home');
-            }}
-          >
-            <span className="brand-symbol">
-              <ChefHat size={25} strokeWidth={1.7} />
-            </span>
-            CookPilot
-          </a>
+          <div className="header-identity">
+            {menuButton}
+            <a
+              className="brand"
+              href="#home"
+              onClick={(event) => {
+                event.preventDefault();
+                navigate('home');
+              }}
+            >
+              <span className="brand-symbol">
+                <ChefHat size={25} strokeWidth={1.7} />
+              </span>
+              CookPilot
+            </a>
+          </div>
           <div className="home-controls">
+            <button className="icon-button new-conversation" aria-label="新建对话" title="新建对话" onClick={newConversation}>
+              <MessageSquarePlus size={20} />
+            </button>
             <button className="model-pill" onClick={() => setSheet('model-switch')}>
-              {activeModel?.name || '选择模型'}
+              <span>{activeModel?.name || '选择模型'}</span>
               <ChevronDown size={13} />
             </button>
             <button
@@ -882,9 +946,7 @@ function App() {
         <main className={`home page ${discoveryTurns.length ? 'home-conversation' : ''}`}>
           <div className="home-center">
             <section className="prompt-card">
-              <h1>
-                想做什么菜？
-              </h1>
+              {!discoveryTurns.length && <h1>想做什么菜？</h1>}
               {!discoveryTurns.length && <p className="prompt-intro">一道菜、几样食材，或一个想法都可以</p>}
               {discoveryTurns.length > 0 && (
                 <div className="discovery-conversation" aria-label="做菜灵感对话" aria-busy={homeBusy === 'analyzing'}>
@@ -931,34 +993,36 @@ function App() {
                   ))}
                 </div>
               )}
-              <div className="prompt-input">
-                <textarea
-                  id="recipe-prompt"
-                  aria-label="描述做菜需求"
-                  maxLength={300}
-                  value={prompt}
-                  onChange={(event) => setPrompt(event.target.value)}
-                  placeholder={discoveryTurns.length ? '换个想法，或继续聊聊…' : '比如：有番茄和鸡蛋，想吃点简单的'}
-                  disabled={homeBusy !== null}
-                />
-                <button className="prompt-submit" onClick={submitPrompt} aria-label="发送消息" disabled={homeBusy !== null || !prompt.trim()}>
-                  {homeBusy ? <LoaderCircle size={19} className="spin" /> : <ArrowRight size={21} />}
-                </button>
-              </div>
-              {!discoveryTurns.length && (
-                <div className="prompt-examples" aria-label="试试这些想法">
-                  {['想做宫保鸡丁', '有番茄和鸡蛋', '想吃点快手的'].map((example) => (
-                    <button key={example} onClick={() => setPrompt(example)}>{example}</button>
-                  ))}
+              <div className="home-composer">
+                <div className="prompt-input">
+                  <textarea
+                    id="recipe-prompt"
+                    aria-label="描述做菜需求"
+                    maxLength={300}
+                    value={prompt}
+                    onChange={(event) => setPrompt(event.target.value)}
+                    placeholder={discoveryTurns.length ? '换个想法，或继续聊聊…' : '比如：有番茄和鸡蛋，想吃点简单的'}
+                    disabled={homeBusy !== null}
+                  />
+                  <button className="prompt-submit" onClick={submitPrompt} aria-label="发送消息" disabled={homeBusy !== null || !prompt.trim()}>
+                    {homeBusy ? <LoaderCircle size={19} className="spin" /> : <ArrowRight size={21} />}
+                  </button>
                 </div>
-              )}
-              {homeBusy === 'generating' && <p className="discovery-status" role="status">正在整理食材和步骤，完成后自动加入 AI 菜谱…</p>}
+                {!discoveryTurns.length && (
+                  <div className="prompt-examples" aria-label="试试这些想法">
+                    {['想做宫保鸡丁', '有番茄和鸡蛋', '想吃点快手的'].map((example) => (
+                      <button key={example} onClick={() => setPrompt(example)}>{example}</button>
+                    ))}
+                  </div>
+                )}
+                {homeBusy === 'generating' && <p className="discovery-status" role="status">正在整理食材和步骤，完成后自动加入 AI 菜谱…</p>}
+              </div>
             </section>
-            <button className="catalog-entry" onClick={() => navigate('library', 'recipes')}>
+            {!discoveryTurns.length && <button className="catalog-entry" onClick={() => navigate('library', 'recipes')}>
               <BookOpen size={20} />
               <span>菜谱大全</span>
               <ArrowRight size={18} />
-            </button>
+            </button>}
           </div>
         </main>
       </>
@@ -1261,10 +1325,13 @@ function App() {
     return (
       <>
         <header className="root-header">
-          <h1 className="mini-brand">
-            <BookOpen size={19} />
-            我的指南
-          </h1>
+          <div className="header-identity">
+            {menuButton}
+            <h1 className="mini-brand">
+              <BookOpen size={19} />
+              我的指南
+            </h1>
+          </div>
           <button
             className="icon-button"
             aria-label="指南数据管理"
@@ -1389,10 +1456,13 @@ function App() {
     return (
       <>
         <header className="root-header">
-          <h1 className="mini-brand">
-            <Settings2 size={19} />
-            我的厨房
-          </h1>
+          <div className="header-identity">
+            {menuButton}
+            <h1 className="mini-brand">
+              <Settings2 size={19} />
+              我的厨房
+            </h1>
+          </div>
         </header>
         <main className="page settings-page">
           <section className="settings-section">
@@ -1604,7 +1674,7 @@ function App() {
   }
 
   return (
-    <div className={`app ${isRoot ? 'root-view' : ''} ${state.timers.length ? 'has-timers' : ''}`}>
+    <div className={`app ${isRoot ? 'root-view' : ''} ${view === 'home' ? 'home-view' : ''} ${state.timers.length ? 'has-timers' : ''}`}>
       <div
         className="app-content"
         inert={sheet !== null || confirm !== null}
@@ -1619,29 +1689,6 @@ function App() {
         {view === 'cook' && renderCook()}
         {view === 'library' && renderLibrary()}
         {view === 'settings' && renderSettings()}
-        {isRoot && (
-          <nav className="bottom-nav" aria-label="主要导航">
-            {(
-              [
-                { key: 'home', icon: CookingPot, label: '开始做菜' },
-                { key: 'library', icon: BookOpen, label: '我的指南' },
-                { key: 'settings', icon: Settings2, label: '我的厨房' },
-              ] as const
-            ).map(({ key, icon: Icon, label }) => (
-              <button
-                key={key}
-                className={view === key ? 'active' : ''}
-                aria-current={view === key ? 'page' : undefined}
-                onClick={() => navigate(key)}
-              >
-                <span>
-                  <Icon size={22} strokeWidth={view === key ? 2 : 1.7} />
-                </span>
-                {label}
-              </button>
-            ))}
-          </nav>
-        )}
         {state.timers.length > 0 && !['timers', 'chat'].includes(sheet || '') && (
           <button
             className="floating-timer"
@@ -1671,6 +1718,38 @@ function App() {
         </div>
       )}
 
+      {sheet === 'navigation' && (
+        <Sheet title="菜单" subtitle="CookPilot" className="navigation-drawer" returnFocus={menuButtonRef.current} onClose={() => setSheet(null)}>
+          <nav className="drawer-navigation" aria-label="主要导航">
+            {([
+              { key: 'home', icon: CookingPot, label: '开始做菜' },
+              { key: 'library', icon: BookOpen, label: '我的指南' },
+              { key: 'settings', icon: Settings2, label: '我的厨房' },
+            ] as const).map(({ key, icon: Icon, label }) => (
+              <button key={key} className={view === key ? 'active' : ''}
+                aria-current={view === key ? 'page' : undefined} onClick={() => navigate(key)}>
+                <Icon size={19} />{label}<ChevronRight size={15} />
+              </button>
+            ))}
+          </nav>
+          <section className="conversation-history" aria-label="对话历史">
+            <div className="history-heading"><h3>对话历史</h3><span>最近 30 天</span></div>
+            {conversations.length ? conversations.map((conversation, index) => {
+              const group = historyGroup(conversation.updatedAt, now);
+              return <div key={conversation.id}>
+                {(index === 0 || historyGroup(conversations[index - 1].updatedAt, now) !== group) &&
+                  <p className="history-group">{group}</p>}
+                <button className={`history-item ${state.activeConversationId === conversation.id ? 'active' : ''}`}
+                  aria-current={state.activeConversationId === conversation.id ? 'true' : undefined}
+                  onClick={() => openConversation(conversation.id)}>
+                  <MessageCircle size={16} /><span>{conversation.title}</span>
+                </button>
+              </div>;
+            }) : <p className="history-empty">还没有对话，开始聊聊今天想做的菜吧。</p>}
+          </section>
+          <p className="history-retention">超过 30 天未继续的对话会自动删除</p>
+        </Sheet>
+      )}
       {sheet === 'preferences' && (
         <Sheet title="通用设置" onClose={() => setSheet(null)}>
           <form
@@ -2093,7 +2172,7 @@ function App() {
                 setConfirm({
                   title: '恢复最初的演示数据？',
                   description:
-                    '会清除当前记录与模型配置，重新放入两份示例指南。建议先导出自己的记录。',
+                    '会清除当前记录与模型配置，重新放入两份示例指南和四段示例对话。建议先导出自己的记录。',
                   label: '恢复演示数据',
                   action: () => {
                     setState(initialState());
@@ -2113,7 +2192,7 @@ function App() {
                 setConfirm({
                   title: '清除这台设备上的全部数据？',
                   description:
-                    '将删除全部指南、心得、计时器和模型配置（含 API Key），无法撤销。',
+                    '将删除全部指南、心得、对话历史、计时器和模型配置（含 API Key），无法撤销。',
                   label: '清除全部数据',
                   action: () => {
                     setState({
@@ -2123,6 +2202,8 @@ function App() {
                       modelId: '',
                       timers: [],
                       preferences: defaultPreferences(),
+                      conversations: [],
+                      activeConversationId: null,
                     });
                     setSheet(null);
                     navigate('home');
