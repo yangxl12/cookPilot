@@ -16,7 +16,7 @@ async function generateChicken(page: Page) {
 async function selectSuggested(page: Page, dish: string) {
   await page.getByRole('button', { name: '发送消息', exact: true }).click();
   await page.getByRole('button', { name: new RegExp(`^(生成菜谱|使用已有菜谱)：${dish}$`) }).last().click();
-  await expect(page).toHaveURL(/#overview$/);
+  await expect(page).toHaveURL(/#cook$/);
 }
 
 async function removeSeedChicken(page: Page) {
@@ -109,7 +109,7 @@ test('旧收藏数据迁移保留指南和复盘，本地管理与导出移除�
   expect(JSON.parse(content).guides.every((g: any) => !('favorite' in g))).toBe(true);
 });
 
-test('完整制作、复盘、搜索与沿用保存版本', async ({ page }) => {
+test('卡片阅读、心得保存、搜索与沿用保存版本', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto('/');
@@ -127,32 +127,28 @@ test('完整制作、复盘、搜索与沿用保存版本', async ({ page }) => 
     original.recipe.ingredients.some((i: any) => ['peanuts', 'chili', 'pepper'].includes(i.id)),
   ).toBe(false);
   expect(original.recipe.prep.find((p: any) => p.id === 'tools').title).toBe('准备餐具');
-  expect(original.recipe.signals.some((s: any) => s.title.includes('花生'))).toBe(false);
+  expect(original.recipe).not.toHaveProperty('signals');
   await expect(page.getByRole('button', { name: /收藏/ })).toHaveCount(0);
   for (const prep of original.recipe.prep)
     await page.getByRole('button', { name: `完成：${prep.title}`, exact: true }).click();
-  await page.getByRole('button', { name: '步骤卡片', exact: true }).click();
+  await page.getByRole('button', { name: '跳转第 1 步', exact: true }).click();
   for (let index = 0; index < original.recipe.steps.length; index++) {
     await expect(page.locator('.current-step h1')).toHaveText(original.recipe.steps[index].title);
     if (index < original.recipe.steps.length - 1)
       await page.getByRole('button', { name: `跳转第 ${index + 2} 步` }).click();
   }
+  await page.getByRole('button', { name: '心得', exact: true }).click();
+  await page.getByLabel('我的记录').fill('不放花生很合适，下次还用这个版本。');
+  await page.getByRole('button', { name: '保存心得' }).click();
   await page.getByRole('button', { name: '返回', exact: true }).click();
-  await page.getByRole('button', { name: '成品检查', exact: true }).click();
-  await expect(page.getByRole('button', { name: /收藏/ })).toHaveCount(0);
-  await page.getByRole('button', { name: '保存这一餐' }).click();
-  await expect(page.getByRole('status')).toContainText('请先确认');
-  for (const signal of original.recipe.signals)
-    await page.getByRole('button', { name: new RegExp(signal.title) }).click();
-  await page.getByRole('button', { name: '评分 5 星' }).click();
-  await page.getByLabel('笔记').fill('不放花生很合适，下次还用这个版本。');
-  await page.getByRole('button', { name: '保存这一餐' }).click();
+  await page.getByRole('button', { name: '我的指南', exact: true }).click();
   await expect(page.getByRole('heading', { name: '我的指南' })).toBeVisible();
   await page.getByRole('textbox', { name: '搜索我的指南' }).fill('宫保');
   await expect(page.locator('.guide-card')).toHaveCount(1);
   const finished = (await stored(page)).guides.find((g: any) => g.id === original.id);
-  expect(finished.status).toBe('finished');
-  expect(finished.rating).toBe(5);
+  expect(finished.status).toBe('cooking');
+  expect(finished.note).toContain('下次还用这个版本');
+  expect(finished).not.toHaveProperty('rating');
   expect(finished).not.toHaveProperty('favorite');
   expect(finished.source).toBe('ai');
   await page.getByRole('button', { name: '再做一次', exact: true }).first().click();
@@ -168,7 +164,7 @@ test('首页与指南库移除续做入口，旧制作记录可查看或从头�
   await expect(page.getByRole('button', { name: /继续烹饪/ })).toHaveCount(0);
   await page.getByRole('textbox', { name: '描述做菜需求' }).fill('宫保鸡丁');
   await selectSuggested(page, '宫保鸡丁');
-  await page.getByRole('button', { name: '步骤卡片', exact: true }).click();
+  await page.getByRole('button', { name: '跳转第 1 步', exact: true }).click();
   await page.getByRole('button', { name: '跳转第 3 步', exact: true }).click();
   const original = (await stored(page)).guides[0];
   expect(original.status).toBe('cooking');
@@ -184,7 +180,7 @@ test('首页与指南库移除续做入口，旧制作记录可查看或从头�
 
   const card = page.locator('.guide-card').first();
   await card.locator('.guide-main').click();
-  await expect(page).toHaveURL(/#overview$/);
+  await expect(page).toHaveURL(/#cook$/);
   await expect(page.getByRole('heading', { name: '宫保鸡丁', exact: true })).toBeVisible();
   await page.goto('/#library');
   await card.getByRole('button', { name: '再做一次', exact: true }).click();
@@ -194,18 +190,19 @@ test('首页与指南库移除续做入口，旧制作记录可查看或从头�
   expect(repeated.currentStep).toBe(0);
   expect(repeated.completed).toEqual([]);
   expect(repeated.checked).toEqual([]);
-  await page.getByRole('button', { name: '步骤卡片', exact: true }).click();
+  await page.getByRole('button', { name: '跳转第 1 步', exact: true }).click();
   await expect(page.locator('.current-step h1')).toHaveText(original.recipe.steps[0].title);
 });
 
 test('进度问答与确认后调整，仅更新剩余流程，刷新恢复', async ({ page }) => {
   await generateChicken(page);
-  await page.getByRole('button', { name: '步骤卡片', exact: true }).click();
+  await page.getByRole('button', { name: '跳转第 1 步', exact: true }).click();
   // Existing saved progress still limits AI adjustments to unfinished steps.
   await page.evaluate(() => {
     const state = JSON.parse(localStorage.getItem('cookpilot.demo.v1')!);
     state.guides[0].completed = [state.guides[0].recipe.steps[0].id];
     state.guides[0].currentStep = 1;
+    state.guides[0].currentCard = 2;
     localStorage.setItem('cookpilot.demo.v1', JSON.stringify(state));
   });
   await page.reload();
@@ -231,7 +228,7 @@ test('进度问答与确认后调整，仅更新剩余流程，刷新恢复', as
 
 test('多个命名计时器暂停、刷新、继续、到点不自动完成和取消', async ({ page }) => {
   await generateChicken(page);
-  await page.getByRole('button', { name: '步骤卡片', exact: true }).click();
+  await page.getByRole('button', { name: '跳转第 1 步', exact: true }).click();
   await page.getByRole('button', { name: /开始计时/ }).click();
   await page.getByRole('button', { name: /查看 1 个运行中的计时器/ }).click();
   await page.getByRole('textbox', { name: '计时名称', exact: true }).fill('第二个计时');
@@ -333,7 +330,7 @@ test('通用设置保存、取消和刷新恢复，忌口口味与多个锅具�
   await page.keyboard.press('Escape');
   await page.getByRole('textbox', { name: '描述做菜需求' }).fill('宫保鸡丁');
   await selectSuggested(page, '宫保鸡丁');
-  await expect(page).toHaveURL(/#overview$/);
+  await expect(page).toHaveURL(/#cook$/);
   const guide = (await stored(page)).guides[0];
   expect(guide.conditions.allergies).toEqual(['花生', '蚕豆', '小葱']);
   expect(
@@ -342,40 +339,125 @@ test('通用设置保存、取消和刷新恢复，忌口口味与多个锅具�
     ),
   ).toBe(false);
   expect(guide.recipe.ingredients.find((item: any) => item.id === 'salt').quantity).toBe(0.7);
-  await expect(page.locator('.tools-list')).toContainText('铁炒锅');
-  await expect(page.locator('.tools-list')).toContainText('带盖炖锅');
+  expect(guide.conditions.cookwares).toEqual(['铁炒锅', '带盖炖锅']);
+  await expect(page.locator('.tools-list')).toHaveCount(0);
 });
 
-test('指南无大图与条件页面，食材平铺、要点展开、完整备菜步骤和直接成品检查', async ({ page }) => {
+test('指南直接进入准备卡片，内容顺序固定，不展示器具或成品检查', async ({ page }) => {
+  await generateChicken(page);
+  await expect(page).toHaveURL(/#cook$/);
+  const active = page.locator('.step-card.active');
+  await expect(active).toHaveClass(/preparation-card/);
+  await expect(active.locator('h2')).toHaveText(['要点', '食材和调味辅料', '备菜']);
+  await expect(active.locator('.preparation-key')).toContainText('花生最后放');
+  await expect(active.getByRole('table', { name: '主要食材' })).toBeVisible();
+  await expect(active.getByRole('table', { name: '调味与辅料' })).toBeVisible();
+  await expect(active.locator('.guide-prep-item')).toHaveCount(4);
+  await expect(page.locator('.step-card')).toHaveCount(6);
+  await expect(page.getByRole('button', { name: '成品检查' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: '器具', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '步骤卡片', exact: true })).toHaveCount(0);
+  await expect(page.locator('.cards-page img, .finish-page, .rating-row')).toHaveCount(0);
+  await page.getByRole('button', { name: '完成：切鸡丁与配料', exact: true }).click();
+  await page.getByRole('button', { name: '开始 10 分钟计时', exact: true }).click();
+  await page.reload();
+  await expect(page.locator('.step-card.active')).toHaveClass(/preparation-card/);
+  await expect(page.getByRole('button', { name: '取消：切鸡丁与配料', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: '问问 AI' }).click();
+  await expect(page.getByRole('dialog')).toContainText('备菜阶段');
+  await page.getByRole('button', { name: '锅里出水了', exact: true }).click();
+  await expect(page.locator('.message.assistant').last()).toContainText('现在先完成备菜');
+  await expect(page.locator('.message.assistant').last()).not.toContainText('现在还在热锅阶段');
+  await expect(page.getByRole('button', { name: '更新剩余步骤' })).toHaveCount(0);
+  await page.getByRole('button', { name: '关闭弹窗' }).click();
+  await page.getByRole('button', { name: '跳转第 2 步' }).click();
+  await page.getByRole('button', { name: '查看全部步骤' }).click();
+  await page.locator('.full-prep').getByRole('button', { name: '查看', exact: true }).click();
+  await expect(page.locator('.step-card.active')).toHaveClass(/preparation-card/);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+test('心得在问问 AI 左侧，可编辑保存、取消、清空，刷新与再次制作隔离', async ({ page }) => {
   await page.goto('/');
-  await expect(page.locator('.home img')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: '菜谱大全', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '菜谱大全', exact: true }).click();
-  await page.getByRole('button', { name: '宫保鸡丁', exact: true }).click();
-  await expect(page).toHaveURL(/#overview$/);
-  await expect(
-    page.locator('.overview img, .recipe-meta, .condition-strip, .key-note'),
-  ).toHaveCount(0);
-  await expect(page.getByRole('table', { name: '主要食材' })).toBeVisible();
-  await expect(page.getByRole('table', { name: '调味与辅料' })).toBeVisible();
-  await expect(page.locator('.overview .segmented')).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: '器具', exact: true })).toBeVisible();
-  await expect(page.locator('.guide-prep-item')).toHaveCount(4);
-  await expect(page.locator('.guide-step')).toHaveCount(5);
-  await expect(page.getByRole('button', { name: '开始备菜' })).toHaveCount(0);
-  await expect(page.locator('#recipe-key-points')).toHaveCount(0);
-  await page.getByRole('button', { name: '烹饪要点' }).click();
-  await expect(page.locator('#recipe-key-points')).toContainText('花生最后放');
-  await page.getByRole('button', { name: '烹饪要点' }).click();
-  await expect(page.locator('#recipe-key-points')).toHaveCount(0);
-  await page.getByRole('button', { name: '成品检查', exact: true }).click();
-  await expect(page).toHaveURL(/#finish$/);
-  await expect(page.locator('.finish-checks button')).toHaveCount(3);
+  await page.getByRole('textbox', { name: '描述做菜需求' }).fill('番茄炒蛋');
+  await selectSuggested(page, '番茄炒蛋');
+  const before = (await stored(page)).guides.find((g: any) => g.recipe.id === 'eggs');
+  expect(await page.locator('.cards-header-actions > button').evaluateAll((buttons) =>
+    buttons.map((button) => button.getAttribute('aria-label')),
+  )).toEqual(['心得', '问问 AI', '查看厨房计时器']);
+  await page.getByRole('button', { name: '心得', exact: true }).click();
+  await expect(page.getByLabel('我的记录')).toHaveValue(before.note);
+  await page.getByLabel('我的记录').fill('记'.repeat(2001));
+  await expect(page.getByLabel('我的记录')).toHaveValue('记'.repeat(2000));
+  await expect(page.locator('.notes-count')).toHaveText('2000 / 2000');
+  await page.getByLabel('我的记录').fill('番茄多炒一会儿。\n下次少放盐。');
+  await page.getByRole('button', { name: '保存心得' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '心得', exact: true })).toBeFocused();
+  await page.reload();
+  await page.getByRole('button', { name: '心得', exact: true }).click();
+  await expect(page.getByLabel('我的记录')).toHaveValue('番茄多炒一会儿。\n下次少放盐。');
+  await page.getByLabel('我的记录').fill('不保存的修改');
+  await page.getByRole('button', { name: '取消', exact: true }).click();
+  await page.getByRole('button', { name: '心得', exact: true }).click();
+  await expect(page.getByLabel('我的记录')).toHaveValue('番茄多炒一会儿。\n下次少放盐。');
+  await page.getByLabel('我的记录').fill('Escape 不保存');
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: '心得', exact: true }).click();
+  await expect(page.getByLabel('我的记录')).toHaveValue('番茄多炒一会儿。\n下次少放盐。');
+  await page.screenshot({ path: '.local/notes-mobile.png', fullPage: true, animations: 'disabled' });
+  await page.getByLabel('我的记录').fill('');
+  await page.getByRole('button', { name: '保存心得' }).click();
+  expect((await stored(page)).guides.find((g: any) => g.id === before.id).note).toBe('');
+  await page.getByRole('button', { name: '心得', exact: true }).click();
+  await page.getByLabel('我的记录').fill('保留在这次制作');
+  await page.getByRole('button', { name: '保存心得' }).click();
+  const after = (await stored(page)).guides.find((g: any) => g.id === before.id);
+  expect({ ...after, note: before.note }).toEqual(before);
+  await page.goto('/#library');
+  await page.getByRole('button', { name: '指南数据管理' }).click();
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: /导出数据/ }).click();
+  const download = await downloadPromise;
+  const backup = JSON.parse(await readFile((await download.path())!, 'utf8'));
+  expect(backup.guides.find((g: any) => g.id === before.id).note).toBe('保留在这次制作');
+  await page.keyboard.press('Escape');
+  await page.locator('.guide-card').filter({ hasText: '番茄炒蛋' }).getByRole('button', { name: '再做一次', exact: true }).click();
+  expect((await stored(page)).guides[0].note).toBe('');
+  expect((await stored(page)).guides.find((g: any) => g.id === before.id).note).toBe('保留在这次制作');
+});
+
+test('旧检查路由与评分字段迁移，保留笔记和步骤', async ({ page }) => {
+  await generateChicken(page);
+  await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem('cookpilot.demo.v1')!);
+    delete state.guides[0].currentCard;
+    state.guides[0].currentStep = 2;
+    state.guides[0].rating = 4;
+    state.guides[0].recipe.signals = [{ title: '旧检查', detail: '旧内容' }];
+    state.guides[0].note = '旧笔记';
+    localStorage.setItem('cookpilot.demo.v1', JSON.stringify(state));
+  });
+  await page.goto('/#finish');
+  await page.reload();
+  await expect(page).toHaveURL(/#cook$/);
+  await expect(page.locator('.current-step h1')).toHaveText('小火炒香配料');
+  const migrated = (await stored(page)).guides[0];
+  expect(migrated.currentCard).toBe(3);
+  expect(migrated.currentStep).toBe(2);
+  expect(migrated).not.toHaveProperty('rating');
+  expect(migrated.recipe).not.toHaveProperty('signals');
+  await page.getByRole('button', { name: '心得', exact: true }).click();
+  await expect(page.getByLabel('我的记录')).toHaveValue('旧笔记');
+  await page.keyboard.press('Escape');
+  await page.goto('/#overview');
+  await expect(page).toHaveURL(/#cook$/);
+  await expect(page.locator('.finish-page')).toHaveCount(0);
 });
 
 test('步骤卡片触摸双向滑动、数字跳转、键盘切换、独立滚动与刷新恢复', async ({ page }) => {
   await generateChicken(page);
-  await page.getByRole('button', { name: '步骤卡片', exact: true }).click();
+  await page.getByRole('button', { name: '跳转第 1 步', exact: true }).click();
   await page.setViewportSize({ width: 390, height: 640 });
   await expect(page.locator('.cards-progress, .cook-dock')).toHaveCount(0);
   await expect(page.getByRole('button', { name: '调整做法', exact: true })).toHaveCount(0);
@@ -402,6 +484,11 @@ test('步骤卡片触摸双向滑动、数字跳转、键盘切换、独立滚�
   await expect(active.locator('h1')).toHaveText('滑炒鸡丁');
   await swipe(75, 310);
   await expect(active.locator('h1')).toHaveText('热锅放油');
+  await swipe(75, 310);
+  await expect(active).toHaveClass(/preparation-card/);
+  expect((await stored(page)).guides[0].currentCard).toBe(0);
+  await swipe(310, 75);
+  await expect(active.locator('h1')).toHaveText('热锅放油');
   await page.getByRole('button', { name: '跳转第 3 步' }).click();
   await expect(active.locator('h1')).toHaveText('小火炒香配料');
   expect((await stored(page)).guides[0].completed).toEqual([]);
@@ -423,8 +510,8 @@ test('步骤卡片触摸双向滑动、数字跳转、键盘切换、独立滚�
   );
   const layout = await page.evaluate(() => {
     const card = document.querySelector('.step-card.active')!.getBoundingClientRect();
-    const previous = document.querySelectorAll('.step-card')[2].getBoundingClientRect();
-    const next = document.querySelectorAll('.step-card')[4].getBoundingClientRect();
+    const previous = document.querySelectorAll('.step-card')[3].getBoundingClientRect();
+    const next = document.querySelectorAll('.step-card')[5].getBoundingClientRect();
     const pagination = document.querySelector('.card-pagination')!.getBoundingClientRect();
     const header = document.querySelector('.process-header')!.getBoundingClientRect();
     const back = document.querySelector('.process-header > button')!.getBoundingClientRect();
@@ -451,6 +538,34 @@ test('步骤卡片触摸双向滑动、数字跳转、键盘切换、独立滚�
   await cdp.detach();
 });
 
+test('卡片与心得在窄屏和大屏可用，操作按钮及数字栏不溢出', async ({ page }) => {
+  await generateChicken(page);
+  for (const width of [320, 390, 480, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.locator('.step-card.active')).toHaveClass(/preparation-card/);
+    const layout = await page.evaluate(() => {
+      const header = document.querySelector('.cards-header-actions')!.getBoundingClientRect();
+      const title = document.querySelector('.process-header > span')!.getBoundingClientRect();
+      const app = document.querySelector('.app')!.getBoundingClientRect();
+      const navigation = document.querySelector('.card-pagination')!;
+      return {
+        pageFits: document.documentElement.scrollWidth <= innerWidth,
+        headerFits: header.right <= app.right && title.right <= header.left,
+        navigationFits: navigation.scrollWidth <= navigation.clientWidth,
+      };
+    });
+    expect(layout).toEqual({ pageFits: true, headerFits: true, navigationFits: true });
+    if (width <= 390)
+      await page.screenshot({ path: `.local/guide-preparation-${width}.png`, fullPage: true, animations: 'disabled' });
+    await page.getByRole('button', { name: '心得', exact: true }).click();
+    await page.getByLabel('我的记录').fill('下次试试少放一点盐。');
+    await expect(page.getByRole('button', { name: '保存心得' })).toBeInViewport();
+    if (width <= 390)
+      await page.screenshot({ path: `.local/guide-notes-${width}.png`, fullPage: true, animations: 'disabled' });
+    await page.keyboard.press('Escape');
+  }
+});
+
 test('菜谱搜索筛选、新增世界家常菜可独立打开，过敏冲突不会生成', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '通用设置' }).click();
@@ -467,7 +582,7 @@ test('菜谱搜索筛选、新增世界家常菜可独立打开，过敏冲突�
   await expect(page.locator('.catalog-recipe')).toHaveCount(1);
   await page.getByRole('button', { name: '日式咖喱鸡', exact: true }).click();
   await expect(page.getByRole('heading', { name: '日式咖喱鸡', exact: true })).toBeVisible();
-  await expect(page.locator('.guide-step')).toHaveCount(3);
+  await expect(page.locator('.step-card:not(.preparation-card)')).toHaveCount(3);
   await page.getByRole('button', { name: '返回', exact: true }).click();
   await expect(page.getByRole('tab', { name: /菜谱大全/ })).toHaveAttribute('aria-selected', 'true');
   await page.getByRole('button', { name: '开始做菜', exact: true }).click();
@@ -518,12 +633,12 @@ for (const [dish, firstStep, steps] of [
   ['番茄炒蛋', '炒鸡蛋', 4],
   ['土豆炖牛肉', '冷水焯牛肉', 5],
 ] as const) {
-  test(`${dish}独立指南可完整执行并复盘保存`, async ({ page }) => {
+  test(`${dish}独立指南可完整阅读并保存心得`, async ({ page }) => {
     await page.goto('/');
     await page.getByRole('button', { name: '菜谱大全', exact: true }).click();
     await page.getByRole('button', { name: dish, exact: true }).click();
     await expect(page.getByRole('heading', { name: dish, exact: true })).toBeVisible();
-    await page.getByRole('button', { name: '步骤卡片', exact: true }).click();
+    await page.getByRole('button', { name: '跳转第 1 步', exact: true }).click();
     await expect(page.locator('.current-step h1')).toHaveText(firstStep);
     for (let step = 0; step < steps; step++) {
       await expect(page.locator('.current-step .signal-card p')).not.toBeEmpty();
@@ -534,13 +649,11 @@ for (const [dish, firstStep, steps] of [
         })
         .click();
     }
-    await page.getByRole('button', { name: '返回', exact: true }).click();
-    await page.getByRole('button', { name: '成品检查', exact: true }).click();
-    for (const signal of await page.locator('.finish-checks button').all()) await signal.click();
-    await page.getByLabel('笔记').fill(`${dish}第一次尝试成功。`);
-    await page.getByRole('button', { name: '保存这一餐' }).click();
+    await page.getByRole('button', { name: '心得', exact: true }).click();
+    await page.getByLabel('我的记录').fill(`${dish}第一次尝试成功。`);
+    await page.getByRole('button', { name: '保存心得' }).click();
     const saved = (await stored(page)).guides[0];
-    expect(saved.status).toBe('finished');
+    expect(saved.status).toBe('cooking');
     expect(saved.completed).toEqual([]);
     expect(saved.note).toContain(dish);
   });
@@ -611,8 +724,13 @@ test('单文件 Demo 离线打开，无外部请求，生成与刷新恢复可�
   await page.getByRole('textbox', { name: '描述做菜需求' }).fill('想做日式咖喱鸡');
   await selectSuggested(page, '日式咖喱鸡');
   await expect(page.getByRole('heading', { name: '日式咖喱鸡', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '心得', exact: true }).click();
+  await page.getByLabel('我的记录').fill('离线保存的心得');
+  await page.getByRole('button', { name: '保存心得' }).click();
   await page.reload();
   await expect(page.getByRole('heading', { name: '日式咖喱鸡', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '心得', exact: true }).click();
+  await expect(page.getByLabel('我的记录')).toHaveValue('离线保存的心得');
   expect(externalRequests).toEqual([]);
 });
 
@@ -629,7 +747,7 @@ test('食材输入先推荐，选中新菜谱才生成并自动入库，再次�
   await curry.click();
   await expect(curry).toBeDisabled();
   await expect(page.getByRole('status')).toContainText('自动加入 AI 菜谱');
-  await expect(page).toHaveURL(/#overview$/);
+  await expect(page).toHaveURL(/#cook$/);
   const saved = (await stored(page)).guides[0];
   expect(saved.recipe.title).toBe('日式咖喱鸡');
   expect(saved.recipe.ingredients.find((i: any) => i.id === 'curry').quantity).toBe(450);
@@ -667,7 +785,7 @@ test('别名命中已有菜谱，复用不改变版本、完成记录、复盘�
   await expect(card).toContainText('AI 菜谱 · 已有');
   await expect(card).toContainText('沿用 v3');
   await card.getByRole('button', { name: '使用已有菜谱：番茄炒蛋', exact: true }).click();
-  await expect(page).toHaveURL(/#overview$/);
+  await expect(page).toHaveURL(/#cook$/);
   const after = await stored(page);
   expect(after.guides).toEqual(before.guides);
   expect(after.timers).toEqual(before.timers);

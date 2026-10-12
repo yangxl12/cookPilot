@@ -15,7 +15,6 @@ import {
   Eye,
   EyeOff,
   Flame,
-  Info,
   Layers,
   LoaderCircle,
   MessageCircle,
@@ -29,7 +28,6 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
-  Star,
   Timer as TimerIcon,
   Trash2,
   Utensils,
@@ -66,15 +64,17 @@ type Adjustment = {
 function StepCarousel({
   guide,
   onSelect,
+  preparation,
   children,
 }: {
   guide: Guide;
   onSelect: (index: number) => void;
+  preparation: ReactNode;
   children: (step: Step, index: number) => ReactNode;
 }) {
   const track = useRef<HTMLDivElement>(null);
-  const selected = useRef(guide.currentStep);
-  selected.current = guide.currentStep;
+  const selected = useRef(guide.currentCard);
+  selected.current = guide.currentCard;
   useEffect(() => {
     const element = track.current;
     if (!element) return;
@@ -92,10 +92,10 @@ function StepCarousel({
     const element = track.current;
     const card = element?.firstElementChild as HTMLElement | null;
     if (element && card) {
-      const left = guide.currentStep * (card.offsetWidth + 12);
+      const left = guide.currentCard * (card.offsetWidth + 12);
       if (Math.abs(element.scrollLeft - left) > 2) element.scrollTo({ left, behavior: 'instant' });
     }
-  }, [guide.currentStep]);
+  }, [guide.currentCard]);
   return (
     <div
       ref={track}
@@ -111,8 +111,8 @@ function StepCarousel({
           Math.max(
             0,
             Math.min(
-              guide.recipe.steps.length - 1,
-              guide.currentStep + (event.key === 'ArrowRight' ? 1 : -1),
+              guide.recipe.steps.length,
+              guide.currentCard + (event.key === 'ArrowRight' ? 1 : -1),
             ),
           ),
         );
@@ -127,21 +127,32 @@ function StepCarousel({
           Math.abs(element.scrollLeft - index * stride) < 2 &&
           index !== selected.current &&
           index >= 0 &&
-          index < guide.recipe.steps.length
+          index <= guide.recipe.steps.length
         )
           onSelect(index);
       }}
     >
+      <article
+        className={`step-card preparation-card ${guide.currentCard === 0 ? 'active current-step' : ''}`}
+        aria-roledescription="幻灯片"
+        aria-label="准备：要点、食材和调味辅料、备菜"
+        aria-hidden={guide.currentCard !== 0}
+        inert={guide.currentCard !== 0}
+      >
+        <div className="step-card-scroll" tabIndex={guide.currentCard === 0 ? 0 : -1}>
+          {preparation}
+        </div>
+      </article>
       {guide.recipe.steps.map((step, index) => (
         <article
           key={step.id}
-          className={`step-card ${index === guide.currentStep ? 'active current-step' : ''}`}
+          className={`step-card ${index + 1 === guide.currentCard ? 'active current-step' : ''}`}
           aria-roledescription="幻灯片"
           aria-label={`第 ${index + 1} 步：${step.title}`}
-          aria-hidden={index !== guide.currentStep}
-          inert={index !== guide.currentStep}
+          aria-hidden={index + 1 !== guide.currentCard}
+          inert={index + 1 !== guide.currentCard}
         >
-          <div className="step-card-scroll" tabIndex={index === guide.currentStep ? 0 : -1}>
+          <div className="step-card-scroll" tabIndex={index + 1 === guide.currentCard ? 0 : -1}>
             {children(step, index)}
           </div>
         </article>
@@ -156,18 +167,20 @@ function Sheet({
   onClose,
   children,
   className = '',
+  returnFocus,
 }: {
   title: string;
   subtitle?: string;
   onClose: () => void;
   children: ReactNode;
   className?: string;
+  returnFocus?: HTMLElement | null;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
   useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
+    const previous = returnFocus ?? document.activeElement as HTMLElement | null;
     const panel = ref.current;
     panel?.focus();
     const handle = (event: KeyboardEvent) => {
@@ -240,7 +253,7 @@ function App() {
       ['overview', 'cook', 'finish'].includes(hash) &&
       saved.guides.some((g) => g.id === saved.activeId)
     )
-      return hash;
+      return 'cook';
     if (isRecipeLibraryHash(window.location.hash)) return 'library';
     return ['library', 'settings'].includes(hash) ? hash : 'home';
   });
@@ -255,7 +268,8 @@ function App() {
   const [requestedSheet, setSheet] = useState<string | null>(null);
   const [toast, setToast] = useState('');
   const [now, setNow] = useState(Date.now());
-  const [showKeyPoints, setShowKeyPoints] = useState(false);
+  const [noteDraft, setNoteDraft] = useState('');
+  const notesButton = useRef<HTMLButtonElement>(null);
   const [recipeFilter, setRecipeFilter] = useState('全部');
   const [recipeSearch, setRecipeSearch] = useState('');
   const [libraryTab, setLibraryTab] = useState<LibraryTab>(() =>
@@ -278,14 +292,14 @@ function App() {
     label: string;
   } | null>(null);
   const [customTimer, setCustomTimer] = useState({ name: '', minutes: 5 });
-  const [finishSignals, setFinishSignals] = useState<string[]>([]);
   const [saveError, setSaveError] = useState(false);
   const timeouts = useRef<ReturnType<typeof setTimeout>[]>([]);
   const chatEnd = useRef<HTMLDivElement>(null);
   const activeGuideRef = useRef(state.activeId);
   activeGuideRef.current = state.activeId;
   const guide = state.guides.find((g) => g.id === state.activeId);
-  const currentStep = guide?.recipe.steps[guide.currentStep];
+  const isPreparation = guide?.currentCard === 0;
+  const currentStep = guide?.recipe.steps[isPreparation ? 0 : guide.currentStep];
   const activeModel = state.models.find((m) => m.id === state.modelId);
   const runningTimers = state.timers.filter((t) => t.endAt !== null && timerRemaining(t, now) > 0);
   const isRoot = ['home', 'library', 'settings'].includes(view);
@@ -333,17 +347,25 @@ function App() {
   useEffect(() => {
     const onHashChange = () => {
       const recipeLibrary = isRecipeLibraryHash(window.location.hash);
-      const requested = recipeLibrary ? 'library' : window.location.hash.slice(1) as View;
+      const requested = recipeLibrary ? 'library' : window.location.hash.slice(1) as View | 'overview' | 'finish';
       const saved = loadState();
       const isRootView = ['home', 'library', 'settings'].includes(requested);
       const hasGuide = saved.guides.some((g) => g.id === saved.activeId);
       if (isRootView || (hasGuide && ['overview', 'cook', 'finish'].includes(requested))) {
         cancelDiscovery();
-        setView(requested);
+        setView(isRootView ? requested as View : 'cook');
+        // Normalize legacy hashes even when the guide view is already open.
+        if (requested === 'overview' || requested === 'finish')
+          history.replaceState(null, '', '#cook');
         if (requested === 'library') setLibraryTab(recipeLibrary ? 'recipes' : 'ai');
         setSheet(null);
         setConfirm(null);
         window.scrollTo({ top: 0, behavior: 'instant' });
+      } else if (['overview', 'cook', 'finish'].includes(requested)) {
+        setView('home');
+        setSheet(null);
+        setConfirm(null);
+        history.replaceState(null, '', '#home');
       }
     };
     window.addEventListener('hashchange', onHashChange);
@@ -404,15 +426,13 @@ function App() {
       notify(conflict);
       return;
     }
-    setFinishSignals([]);
     setMessages([]);
     setAdjustment(null);
     setQuestion('');
-    setShowKeyPoints(false);
     const generated = makeGuide(recipe, next);
     generated.source = source;
     setState((prev) => ({ ...prev, guides: [generated, ...prev.guides], activeId: generated.id }));
-    navigate('overview');
+    navigate('cook');
     if (source === 'ai') notify('菜谱已生成，已加入 AI 菜谱');
   }
   function submitPrompt() {
@@ -463,16 +483,14 @@ function App() {
     }, 850);
   }
   function openGuide(g: Guide) {
-    setState((prev) => ({ ...prev, activeId: g.id }));
-    setShowKeyPoints(false);
-    setFinishSignals([]);
+    setState((prev) => ({
+      ...prev,
+      activeId: g.id,
+      guides: prev.guides.map((item) => item.id === g.id ? { ...item, currentCard: 0 } : item),
+    }));
     setMessages([]);
     setAnswering(false);
     setAdjustment(null);
-    navigate('overview');
-  }
-  function startCooking() {
-    updateGuide((g) => ({ ...g, status: 'cooking' }));
     navigate('cook');
   }
   function repeatGuide(g: Guide) {
@@ -482,17 +500,16 @@ function App() {
       checked: [],
       completed: [],
       currentStep: 0,
+      currentCard: 0,
       status: 'ready' as const,
       note: '',
-      rating: 0,
       createdAt: new Date().toISOString(),
     };
     setState((prev) => ({ ...prev, guides: [next, ...prev.guides], activeId: next.id }));
-    setFinishSignals([]);
     setMessages([]);
     setAdjustment(null);
     setAnswering(false);
-    navigate('overview');
+    navigate('cook');
     notify(`已沿用 v${g.version} 指南`);
   }
   function addTimer(name: string, seconds: number, stepId: string) {
@@ -539,7 +556,7 @@ function App() {
         {
           id: uid(),
           role: 'assistant',
-          text: `当前步骤：${currentStep.title}。有什么问题？`,
+          text: isPreparation ? '现在是备菜阶段，有什么问题？' : `当前步骤：${currentStep.title}。有什么问题？`,
         },
       ]);
     setSheet('chat');
@@ -547,7 +564,7 @@ function App() {
   function requestAdjustment(kind: Adjustment['kind']) {
     if (!guide) return;
     const remaining = guide.recipe.steps
-      .filter((_, index) => index >= guide.currentStep)
+      .filter((_, index) => index >= (isPreparation ? 0 : guide.currentStep))
       .filter((s) => !guide.completed.includes(s.id));
     const affected = remaining
       .filter((s) =>
@@ -623,10 +640,12 @@ function App() {
         answer = `这一步看状态更可靠：${currentStep.signal}\n\n${currentStep.tip} 不必只等倒计时结束；如果还没达到状态，就继续观察。`;
       if (/为什么|原理/.test(q))
         answer = `${currentStep.why}\n\n实际操作时，记住：${currentStep.tip}`;
-      const waterBeforeFood = /水|出水/.test(q) && currentStep.id === 'heat';
+      if (isPreparation && !/辣|醋|咸|少盐|清淡/.test(q))
+        answer = `现在先完成备菜：${guide.recipe.prep.map((prep) => `${prep.title}：${prep.detail}`).join('\n\n')}\n\n要点：${guide.recipe.key}${timerText ? `\n\n当前计时：${timerText}` : ''}`;
+      const waterBeforeFood = /水|出水/.test(q) && (isPreparation || currentStep.id === 'heat');
       const braisingWater =
-        /水|出水/.test(q) && guide.recipe.id === 'beef' && currentStep.id === 'braise';
-      if (waterBeforeFood)
+        !isPreparation && /水|出水/.test(q) && guide.recipe.id === 'beef' && currentStep.id === 'braise';
+      if (waterBeforeFood && !isPreparation)
         answer =
           '现在还在热锅阶段，不要往热油中加水。如果锅底有水，先关火，等待冷却后倒掉水并擦干，再按本步重新热锅。这种情况无需修改后续碗汁用量。';
       if (braisingWater)
@@ -665,7 +684,7 @@ function App() {
           ),
         };
       });
-      changed.changes.push(`${title}（第 ${g.currentStep + 1} 步起）`);
+      changed.changes.push(`${title}（第 ${isPreparation ? 1 : g.currentStep + 1} 步起）`);
       changed.version += 1;
       return changed;
     });
@@ -742,7 +761,7 @@ function App() {
   function deleteGuide(g: Guide) {
     setConfirm({
       title: `删除「${g.recipe.title}」？`,
-      description: '将删除这份指南、复盘和关联计时器，此操作无法撤销。',
+      description: '将删除这份指南、心得和关联计时器，此操作无法撤销。',
       label: '删除指南',
       action: () => {
         setState((prev) => ({
@@ -1014,197 +1033,93 @@ function App() {
     );
   }
 
-  function renderOverview() {
+  function renderPreparation() {
     if (!guide) return null;
     const r = guide.recipe;
     return (
       <>
-        {processHeader('烹饪指南', () =>
-          guide.source === 'catalog' ? navigate('library', 'recipes') : navigate('home'),
-        )}
-        <main className="overview process-page">
-          <div className="overview-body">
-            <div className="overview-title">
-              <div className="dish-heading">
-                <h1>{r.title}</h1>
-                <button
-                  className={`icon-button key-toggle ${showKeyPoints ? 'selected' : ''}`}
-                  aria-label="烹饪要点"
-                  aria-expanded={showKeyPoints}
-                  aria-controls="recipe-key-points"
-                  onClick={() => setShowKeyPoints(!showKeyPoints)}
-                >
-                  <Info size={18} />
-                </button>
-              </div>
-              <button className="cards-entry" onClick={startCooking}>
-                <Layers size={16} />
-                步骤卡片
-              </button>
-            </div>
-            {showKeyPoints && (
-              <div id="recipe-key-points" className="key-points">
-                <p>{r.key}</p>
-              </div>
-            )}
-            <section className="ingredients-section" aria-label="食材清单">
-              {(['主料', '调味'] as const).map((group) => (
-                <table className="recipe-ingredient-table" key={group}>
-                  <caption>{group === '主料' ? '主要食材' : '调味与辅料'}</caption>
-                  <thead className="sr-only">
-                    <tr>
-                      <th scope="col">食材</th>
-                      <th scope="col">用量</th>
+        <div className="step-number">开始之前</div>
+        <h1>{r.title}</h1>
+        <section className="preparation-key">
+          <h2>要点</h2>
+          <p>{r.key}</p>
+        </section>
+        <h2 className="preparation-ingredients-title">食材和调味辅料</h2>
+        <section className="ingredients-section" aria-label="食材清单">
+          {(['主料', '调味'] as const).map((group) => (
+            <table className="recipe-ingredient-table" key={group}>
+              <caption>{group === '主料' ? '主要食材' : '调味与辅料'}</caption>
+              <thead className="sr-only">
+                <tr>
+                  <th scope="col">食材</th>
+                  <th scope="col">用量</th>
+                </tr>
+              </thead>
+              <tbody>
+                {r.ingredients
+                  .filter((item) => item.group === group)
+                  .map((item) => (
+                    <tr key={item.id}>
+                      <th scope="row">
+                        {item.name}
+                        {item.note && <small>{item.note}</small>}
+                      </th>
+                      <td>{quantity(item)}</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {r.ingredients
-                      .filter((item) => item.group === group)
-                      .map((item) => (
-                        <tr key={item.id}>
-                          <th scope="row">
-                            {item.name}
-                            {item.note && <small>{item.note}</small>}
-                          </th>
-                          <td>{quantity(item)}</td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              ))}
-            </section>
-            <section className="tools-section guide-section">
-              <h2>器具</h2>
-              <div className="tools-list">
-                {r.tools.map((tool) => (
-                  <span key={tool}>
-                    <Check size={13} />
-                    {tool}
-                  </span>
-                ))}
-              </div>
-            </section>
-            <section className="guide-section guide-prep">
-              <h2>备菜</h2>
-              <div className="guide-prep-list">
-                {r.prep.map((prep, index) => (
-                  <article className="guide-prep-item" key={prep.id}>
+                  ))}
+              </tbody>
+            </table>
+          ))}
+        </section>
+        <section className="guide-section guide-prep">
+          <h2>备菜</h2>
+          <div className="guide-prep-list">
+            {r.prep.map((prep, index) => (
+              <article className="guide-prep-item" key={prep.id}>
+                <button
+                  className={`prep-check ${guide.checked.includes(prep.id) ? 'checked' : ''}`}
+                  aria-label={`${guide.checked.includes(prep.id) ? '取消' : '完成'}：${prep.title}`}
+                  aria-pressed={guide.checked.includes(prep.id)}
+                  onClick={() =>
+                    updateGuide((g) => ({
+                      ...g,
+                      checked: g.checked.includes(prep.id)
+                        ? g.checked.filter((id) => id !== prep.id)
+                        : [...g.checked, prep.id],
+                    }))
+                  }
+                >
+                  {guide.checked.includes(prep.id) ? <Check size={16} /> : index + 1}
+                </button>
+                <div>
+                  <h3>{prep.title}</h3>
+                  <p>{prep.detail}</p>
+                  {prep.parallel && <p className="prep-parallel">{prep.parallel}</p>}
+                  {prep.seconds && (
                     <button
-                      className={`prep-check ${guide.checked.includes(prep.id) ? 'checked' : ''}`}
-                      aria-label={`${guide.checked.includes(prep.id) ? '取消' : '完成'}：${prep.title}`}
-                      aria-pressed={guide.checked.includes(prep.id)}
-                      onClick={() =>
-                        updateGuide((g) => ({
-                          ...g,
-                          checked: g.checked.includes(prep.id)
-                            ? g.checked.filter((id) => id !== prep.id)
-                            : [...g.checked, prep.id],
-                        }))
-                      }
+                      className="timer-start-small"
+                      onClick={() => addTimer(prep.title, prep.seconds!, prep.id)}
                     >
-                      {guide.checked.includes(prep.id) ? <Check size={16} /> : index + 1}
+                      <TimerIcon size={15} />
+                      开始 {prep.seconds / 60} 分钟计时
                     </button>
-                    <div>
-                      <h3>{prep.title}</h3>
-                      <p>{prep.detail}</p>
-                      {prep.parallel && <p className="prep-parallel">{prep.parallel}</p>}
-                      {prep.seconds && (
-                        <button
-                          className="timer-start-small"
-                          onClick={() => addTimer(prep.title, prep.seconds!, prep.id)}
-                        >
-                          <TimerIcon size={15} />
-                          开始 {prep.seconds / 60} 分钟计时
-                        </button>
-                      )}
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </section>
-            <section className="guide-section guide-steps">
-              <h2>全部步骤</h2>
-              {r.steps.map((step, index) => (
-                <article className="guide-step" key={step.id}>
-                  <span
-                    className={`guide-step-number ${guide.completed.includes(step.id) ? 'done' : ''}`}
-                  >
-                    {guide.completed.includes(step.id) ? (
-                      <Check size={15} />
-                    ) : (
-                      String(index + 1).padStart(2, '0')
-                    )}
-                  </span>
-                  <div>
-                    <h3>{step.title}</h3>
-                    <div className="guide-step-meta">
-                      {step.heat && (
-                        <span>
-                          <Flame size={13} />
-                          {step.heat}
-                        </span>
-                      )}
-                      {step.seconds && (
-                        <span>
-                          <Clock3 size={13} />
-                          {step.seconds >= 60
-                            ? `${Math.round(step.seconds / 60)} 分钟`
-                            : `${step.seconds} 秒`}
-                        </span>
-                      )}
-                    </div>
-                    <p>{step.action}</p>
-                    <p className="guide-step-signal">
-                      <Eye size={14} />
-                      {step.signal}
-                    </p>
-                    <details className="guide-step-details">
-                      <summary>
-                        操作提示
-                        <ChevronDown size={14} />
-                      </summary>
-                      <p>{step.tip}</p>
-                      <p>{step.why}</p>
-                    </details>
-                  </div>
-                </article>
-              ))}
-            </section>
-            {guide.note && (
-              <div className="previous-note">
-                <span>
-                  <BookOpen size={16} />
-                  笔记
-                </span>
-                <p>{guide.note}</p>
-              </div>
-            )}
-            {guide.changes.length > 0 && (
-              <details className="detail-disclosure">
-                <summary>
-                  流程调整 · v{guide.version}
-                  <ChevronDown size={16} />
-                </summary>
-                {guide.changes.map((change, index) => (
-                  <p key={index}>{change}</p>
-                ))}
-              </details>
-            )}
+                  )}
+                </div>
+              </article>
+            ))}
           </div>
-        </main>
-        <div className="action-dock">
-          <button
-            className="primary-button"
-            onClick={() => {
-              setFinishSignals([]);
-              navigate('finish');
-            }}
-          >
-            <CheckCheck size={19} />
-            成品检查
-            <ArrowRight size={18} />
-          </button>
-        </div>
+        </section>
+        {guide.changes.length > 0 && (
+          <details className="detail-disclosure">
+            <summary>
+              流程调整 · v{guide.version}
+              <ChevronDown size={16} />
+            </summary>
+            {guide.changes.map((change, index) => (
+              <p key={index}>{change}</p>
+            ))}
+          </details>
+        )}
       </>
     );
   }
@@ -1212,14 +1127,26 @@ function App() {
   function renderCook() {
     if (!guide || !currentStep) return null;
     const r = guide.recipe;
-    const index = guide.currentStep;
-    const selectStep = (selected: number) => updateGuide((g) => ({ ...g, currentStep: selected }));
+    const index = guide.currentCard;
+    const selectStep = (selected: number) => updateGuide((g) => ({
+      ...g,
+      currentCard: selected,
+      currentStep: selected > 0 ? selected - 1 : g.currentStep,
+      status: selected > 0 && g.status === 'ready' ? 'cooking' : g.status,
+    }));
     return (
       <div className="cards-page">
         {processHeader(
           r.title,
-          () => navigate('overview'),
+          () => guide.source === 'catalog' ? navigate('library', 'recipes') : navigate('home'),
           <div className="cards-header-actions">
+            <button ref={notesButton} aria-label="心得" onClick={() => {
+              setNoteDraft(guide.note);
+              setSheet('notes');
+            }}>
+              <BookOpen size={17} />
+              心得
+            </button>
             <button aria-label="问问 AI" onClick={openChat}>
               <MessageCircle size={17} />
               问问 AI
@@ -1231,7 +1158,7 @@ function App() {
           </div>,
         )}
         <main className="cards-main">
-          <StepCarousel guide={guide} onSelect={selectStep}>
+          <StepCarousel guide={guide} onSelect={selectStep} preparation={renderPreparation()}>
             {(step, stepIndex) => {
               const stepTimers = state.timers.filter(
                 (timer) => timer.guideId === guide.id && timer.stepId === step.id,
@@ -1301,13 +1228,21 @@ function App() {
             }}
           </StepCarousel>
           <nav className="card-pagination" aria-label="跳转步骤">
+            <button
+              aria-label="跳转准备卡片"
+              aria-current={index === 0 ? 'step' : undefined}
+              className={index === 0 ? 'active preparation-tab' : 'preparation-tab'}
+              onClick={() => selectStep(0)}
+            >
+              准备
+            </button>
             {r.steps.map((step, stepIndex) => (
               <button
                 key={step.id}
                 aria-label={`跳转第 ${stepIndex + 1} 步`}
-                aria-current={index === stepIndex ? 'step' : undefined}
-                className={`${index === stepIndex ? 'active' : ''} ${guide.completed.includes(step.id) ? 'done' : ''}`}
-                onClick={() => selectStep(stepIndex)}
+                aria-current={index === stepIndex + 1 ? 'step' : undefined}
+                className={`${index === stepIndex + 1 ? 'active' : ''} ${guide.completed.includes(step.id) ? 'done' : ''}`}
+                onClick={() => selectStep(stepIndex + 1)}
               >
                 {stepIndex + 1}
               </button>
@@ -1318,116 +1253,6 @@ function App() {
           </nav>
         </main>
       </div>
-    );
-  }
-  function renderFinish() {
-    if (!guide) return null;
-    const allChecked = finishSignals.length === guide.recipe.signals.length;
-    return (
-      <>
-        {processHeader('成品检查', () => navigate('overview'))}
-        <main className="page finish-page process-page">
-          <div className="finish-photo">
-            {guide.recipe.image ? (
-              <img src={guide.recipe.image} alt={guide.recipe.title} />
-            ) : (
-              <div className="finished-dish-icon">
-                <CookingPot size={52} strokeWidth={1.2} />
-              </div>
-            )}
-            <span>
-              <Check size={27} />
-            </span>
-          </div>
-          <h1>{guide.recipe.title}</h1>
-          <div className="finish-checks">
-            {guide.recipe.signals.map((s) => (
-              <button
-                key={s.title}
-                aria-pressed={finishSignals.includes(s.title)}
-                onClick={() =>
-                  setFinishSignals((prev) =>
-                    prev.includes(s.title) ? prev.filter((t) => t !== s.title) : [...prev, s.title],
-                  )
-                }
-              >
-                <span
-                  className={`check-square ${finishSignals.includes(s.title) ? 'checked' : ''}`}
-                >
-                  {finishSignals.includes(s.title) && <Check size={15} />}
-                </span>
-                <span>
-                  <b>{s.title}</b>
-                  <small>{s.detail}</small>
-                </span>
-              </button>
-            ))}
-          </div>
-          <section className="review-section">
-            <h2>评分</h2>
-            <div className="rating-row">
-              {[1, 2, 3, 4, 5].map((n) => (
-                <button
-                  key={n}
-                  aria-label={`评分 ${n} 星`}
-                  className={guide.rating >= n ? 'rated' : ''}
-                  onClick={() => updateGuide((g) => ({ ...g, rating: n }))}
-                >
-                  <Star
-                    size={30}
-                    fill={guide.rating >= n ? 'currentColor' : 'none'}
-                    strokeWidth={1.5}
-                  />
-                </button>
-              ))}
-            </div>
-            <label className="review-label" htmlFor="review">
-              笔记
-            </label>
-            <textarea
-              id="review"
-              maxLength={500}
-              value={guide.note}
-              onChange={(e) => updateGuide((g) => ({ ...g, note: e.target.value }))}
-              placeholder="记录下次想调整的地方"
-            />
-            <div className="review-presets">
-              {['刚刚好，很好吃', '下次少放一点盐', '下次减小火力'].map((note) => (
-                <button key={note} onClick={() => updateGuide((g) => ({ ...g, note }))}>
-                  {note}
-                </button>
-              ))}
-            </div>
-          </section>
-        </main>
-        <div className="action-dock">
-          <button
-            className="primary-button"
-            onClick={() => {
-              if (!allChecked) {
-                notify('请先确认上面的成品状态；还没达到时可以返回检查步骤');
-                return;
-              }
-              updateGuide((g) => ({ ...g, status: 'finished' }));
-              setState((prev) => ({
-                ...prev,
-                timers: prev.timers.filter((t) => t.guideId !== prev.activeId),
-              }));
-              navigate('library', guide.source === 'catalog' ? 'recipes' : 'ai');
-              notify('已保存');
-            }}
-          >
-            <BookOpen size={18} />
-            保存这一餐
-            <Check size={18} />
-          </button>
-          <span className="dock-caption">
-            {allChecked
-              ? '成品状态已确认'
-              : `已确认 ${finishSignals.length}/${guide.recipe.signals.length} 项成品状态`}
-          </span>
-        </div>
-      </>
     );
   }
   function renderLibrary() {
@@ -1791,9 +1616,7 @@ function App() {
           </div>
         )}
         {view === 'home' && renderHome()}
-        {view === 'overview' && renderOverview()}
         {view === 'cook' && renderCook()}
-        {view === 'finish' && renderFinish()}
         {view === 'library' && renderLibrary()}
         {view === 'settings' && renderSettings()}
         {isRoot && (
@@ -1913,6 +1736,30 @@ function App() {
           </form>
         </Sheet>
       )}
+      {sheet === 'notes' && guide && (
+        <Sheet title="心得" subtitle={guide.recipe.title} returnFocus={notesButton.current} onClose={() => setSheet(null)}>
+          <form className="notes-form" onSubmit={(event) => {
+            event.preventDefault();
+            updateGuide((g) => ({ ...g, note: noteDraft }));
+            setSheet(null);
+            notify('心得已保存');
+          }}>
+            <label htmlFor="cooking-notes">我的记录</label>
+            <textarea
+              id="cooking-notes"
+              maxLength={2000}
+              value={noteDraft}
+              onChange={(event) => setNoteDraft(event.target.value)}
+              placeholder="记下这次的做法、口味，或下次想调整的地方…"
+            />
+            <span className="notes-count">{noteDraft.length} / 2000</span>
+            <div className="notes-actions">
+              <button type="button" className="secondary-button" onClick={() => setSheet(null)}>取消</button>
+              <button type="submit" className="primary-button">保存心得</button>
+            </div>
+          </form>
+        </Sheet>
+      )}
       {sheet === 'steps' && guide && (
         <Sheet
           title="全部步骤"
@@ -1926,16 +1773,24 @@ function App() {
                 <b>先备菜</b>
                 <small>{guide.recipe.prep.map((p) => p.title).join(' → ')}</small>
               </span>
-              <button className="text-button" onClick={() => navigate('overview')}>
+              <button className="text-button" onClick={() => {
+                updateGuide((g) => ({ ...g, currentCard: 0 }));
+                setSheet(null);
+              }}>
                 查看
               </button>
             </div>
             {guide.recipe.steps.map((step, index) => (
               <button
                 key={step.id}
-                className={`full-step ${index === guide.currentStep ? 'current' : ''}`}
+                className={`full-step ${index + 1 === guide.currentCard ? 'current' : ''}`}
                 onClick={() => {
-                  updateGuide((g) => ({ ...g, currentStep: index }));
+                  updateGuide((g) => ({
+                    ...g,
+                    currentStep: index,
+                    currentCard: index + 1,
+                    status: g.status === 'ready' ? 'cooking' : g.status,
+                  }));
                   navigate('cook');
                 }}
               >
@@ -1982,7 +1837,7 @@ function App() {
                 addTimer(
                   customTimer.name.trim(),
                   Math.round(customTimer.minutes * 60),
-                  currentStep?.id || 'custom',
+                  isPreparation ? 'preparation' : currentStep?.id || 'custom',
                 );
                 setCustomTimer({ name: '', minutes: 5 });
               }}
@@ -2027,7 +1882,7 @@ function App() {
       {sheet === 'chat' && guide && (
         <Sheet
           title="问问 AI"
-          subtitle={`${guide.recipe.title} · 第 ${guide.currentStep + 1} 步 · 演示问答`}
+          subtitle={`${guide.recipe.title} · ${isPreparation ? '备菜阶段' : `第 ${guide.currentStep + 1} 步`} · 演示问答`}
           className="chat-sheet"
           onClose={() => setSheet(null)}
         >
@@ -2258,7 +2113,7 @@ function App() {
                 setConfirm({
                   title: '清除这台设备上的全部数据？',
                   description:
-                    '将删除全部指南、复盘、计时器和模型配置（含 API Key），无法撤销。',
+                    '将删除全部指南、心得、计时器和模型配置（含 API Key），无法撤销。',
                   label: '清除全部数据',
                   action: () => {
                     setState({

@@ -1,5 +1,5 @@
 export type RecipeId = 'chicken' | 'eggs' | 'beef' | 'pasta' | 'curry' | 'omelette';
-export type View = 'home' | 'overview' | 'cook' | 'finish' | 'library' | 'settings';
+export type View = 'home' | 'cook' | 'library' | 'settings';
 export type GuideSource = 'ai' | 'catalog';
 export type Conditions = {
   servings: number;
@@ -52,7 +52,6 @@ export type Recipe = {
   key: string;
   prep: Prep[];
   steps: Step[];
-  signals: { title: string; detail: string }[];
 };
 export type Guide = {
   id: string;
@@ -60,11 +59,12 @@ export type Guide = {
   conditions: Conditions;
   checked: string[];
   currentStep: number;
+  // 0 is preparation; 1..N map to cooking steps without changing their IDs.
+  currentCard: number;
   completed: string[];
   status: 'ready' | 'cooking' | 'finished';
   source: GuideSource;
   note: string;
-  rating: number;
   createdAt: string;
   changes: string[];
   version: number;
@@ -218,14 +218,6 @@ export const recipes: Recipe[] = [
         why: '花生吸水会变软，临出锅时加入能保留口感。',
       },
     ],
-    signals: [
-      {
-        title: '鸡肉熟透',
-        detail: '切开最大一块，中心不透明、没有粉红色；有食物温度计时，中心温度达到 74°C。',
-      },
-      { title: '酱汁均匀包裹', detail: '酱汁亮而薄，均匀挂在鸡丁上，盘底只有少量汁。' },
-      { title: '鸡肉嫩、花生脆', detail: '鸡肉嫩、花生脆，入口咸鲜，随后有轻微酸甜与辣味。' },
-    ],
   },
   {
     id: 'eggs',
@@ -311,11 +303,6 @@ export const recipes: Recipe[] = [
         tip: '如果偏酸，下次可以换更成熟的番茄。',
         why: '最后加葱，保留清新的葱香。',
       },
-    ],
-    signals: [
-      { title: '鸡蛋软嫩且熟透', detail: '没有流动的生蛋液，切开蛋块质地均匀。' },
-      { title: '番茄软且成块', detail: '有自然的红色汤汁，番茄没有完全煮成泥。' },
-      { title: '汤汁裹住蛋块', detail: '蛋块吸收番茄汁，盘底保留少量可拌饭的浓汁。' },
     ],
   },
   {
@@ -425,11 +412,6 @@ export const recipes: Recipe[] = [
         why: '开盖让水分蒸发，味道更集中。',
       },
     ],
-    signals: [
-      { title: '牛肉软烂', detail: '筷子可以较轻松插入，肉纤维软而不柴。' },
-      { title: '土豆软且成块', detail: '没有硬芯，边缘稍松，但夹起时仍完整。' },
-      { title: '汤汁浓稠', detail: '汁能挂在食材表面，锅底没有焦糊。' },
-    ],
   },
 ];
 
@@ -505,10 +487,6 @@ recipes.push(
         why: '面汤中的淀粉帮助酱汁附着在面条上。',
       },
     ],
-    signals: [
-      { title: '面条熟透', detail: '咬开没有硬芯，仍有弹性。' },
-      { title: '酱汁均匀', detail: '酱汁包裹面条，盘底没有大量水分。' },
-    ],
   },
   {
     id: 'curry',
@@ -575,11 +553,6 @@ recipes.push(
         why: '小火搅拌使咖喱均匀融化，避免糊底。',
       },
     ],
-    signals: [
-      { title: '鸡肉熟透', detail: '最大一块切开，中心无生肉质感。' },
-      { title: '蔬菜软糯', detail: '土豆和胡萝卜没有硬芯。' },
-      { title: '咖喱浓稠', detail: '汤汁均匀，无结块和焦糊味。' },
-    ],
   },
   {
     id: 'omelette',
@@ -644,10 +617,6 @@ recipes.push(
         why: '最后折叠能包住馅料，保留完整外形。',
       },
     ],
-    signals: [
-      { title: '蛋液凝固', detail: '内部没有流动的生蛋液。' },
-      { title: '蘑菇鲜嫩', detail: '蘑菇熟软，盘底没有大量水分。' },
-    ],
   },
 );
 
@@ -693,7 +662,6 @@ export function makeGuide(recipe: Recipe, conditions: Conditions): Guide {
       why: s.why.replace('辣椒和花椒', '姜蒜'),
     }));
     r.prep[0].detail = r.prep[0].detail.replace('，干辣椒剪段', '');
-    r.signals = r.signals.map((s) => ({ ...s, detail: s.detail.replace('与辣味', '') }));
   } else if (conditions.taste === '中辣' && r.id === 'chicken') {
     const chili = r.ingredients.find((item) => item.id === 'chili');
     if (chili) chili.quantity *= 2;
@@ -730,11 +698,6 @@ export function makeGuide(recipe: Recipe, conditions: Conditions): Guide {
       '全程不使用花生及花生油，留意调料标签与工具交叉接触。',
     );
     r.subtitle = '不加花生，也有酸甜咸鲜的好滋味';
-    r.signals = r.signals.map((s) => ({
-      ...s,
-      title: s.title === '鸡肉嫩、花生脆' ? '鸡肉鲜嫩' : s.title,
-      detail: s.detail.replace('、花生脆', ''),
-    }));
   }
   if (conditions.allergies.some((text) => /小葱|葱花|^葱$/.test(text))) {
     r.ingredients = r.ingredients.filter((item) => item.id !== 'scallion');
@@ -820,11 +783,11 @@ export function makeGuide(recipe: Recipe, conditions: Conditions): Guide {
     conditions: structuredClone(conditions),
     checked: [],
     currentStep: 0,
+    currentCard: 0,
     completed: [],
     status: 'ready',
     source: 'ai',
     note: '',
-    rating: 0,
     createdAt: new Date().toISOString(),
     changes: [],
     version: 1,
@@ -838,7 +801,6 @@ export function initialState(): State {
   eggs.status = 'finished';
   eggs.completed = eggs.recipe.steps.map((s) => s.id);
   eggs.checked = eggs.recipe.prep.map((p) => p.id);
-  eggs.rating = 5;
   eggs.note = '番茄炒久一点，汤汁拌饭刚刚好。';
   return {
     guides: [chicken, eggs],
@@ -875,26 +837,18 @@ const conciseLabels: Record<string, string> = {
   '小火煸香，香味慢慢出来': '小火炒香配料',
   '鸡丁回锅，淋汁快速翻匀': '鸡丁回锅调味',
   '最后放花生，翻匀就出锅': '放花生，翻匀出锅',
-  '鸡肉熟透，吃着才安心': '鸡肉熟透',
-  '薄芡裹身，不是一盘汤': '酱汁均匀包裹',
-  '香味到位，口感有层次': '鸡肉嫩、花生脆',
   切好番茄和小葱: '切番茄和小葱',
   调味料与盛菜盘放手边: '准备调料与餐具',
   把鸡蛋炒得蓬松一些: '炒鸡蛋',
   '炒番茄，等它释放酸甜': '炒番茄',
   让鸡蛋裹满番茄汁: '鸡蛋回锅翻匀',
   '撒葱花，热乎乎地上桌': '撒葱花出锅',
-  '番茄变软，仍能看见形状': '番茄软且成块',
-  '酸甜适口，汤汁裹住蛋块': '汤汁裹住蛋块',
   '牛腩切块，葱姜备好': '切牛腩与葱姜',
   '冷水焯牛肉，去掉浮沫': '冷水焯牛肉',
   '炒香配料，给牛肉上色': '炒香配料与牛肉',
   '小火慢炖，把时间交给锅': '小火炖牛肉',
   '再放土豆，一起炖到软糯': '加入土豆炖煮',
   '开盖收汁，留住一口浓香': '开盖收汁',
-  '牛肉软烂、不费力': '牛肉软烂',
-  '土豆软糯、保持块状': '土豆软且成块',
-  '汤汁浓香、留有余地': '汤汁浓稠',
   '翻匀出锅，趁热享用': '翻匀出锅',
   把出锅要用的工具放手边: '准备餐具',
 };
@@ -909,13 +863,21 @@ export function loadState(): State {
         return {
           ...value,
           preferences: { ...defaultPreferences(), ...value.preferences },
-          guides: value.guides.map((saved: Guide & { favorite?: boolean }) => {
-            const { favorite: _removed, ...g } = saved;
+          guides: value.guides.map((saved: Guide & { favorite?: boolean; rating?: number }) => {
+            const { favorite: _removed, rating: _removedRating, ...g } = saved;
+            const { signals: _removedSignals, ...recipe } = g.recipe as Recipe & { signals?: unknown };
+            const currentStep = Math.max(0, Math.min(recipe.steps.length - 1, Math.trunc(g.currentStep) || 0));
+            const currentCard = Number.isInteger(g.currentCard)
+              ? Math.max(0, Math.min(recipe.steps.length, g.currentCard))
+              : currentStep + 1;
             return {
               ...g,
+              currentStep,
+              currentCard,
+              note: typeof g.note === 'string' ? g.note : '',
               source: g.source === 'catalog' ? 'catalog' : 'ai',
               recipe: {
-                ...g.recipe,
+                ...recipe,
                 prep: g.recipe.prep.map((p) => ({
                   ...p,
                   title:
@@ -926,15 +888,6 @@ export function loadState(): State {
                       : conciseLabel(p.title),
                 })),
                 steps: g.recipe.steps.map((s) => ({ ...s, title: conciseLabel(s.title) })),
-                signals: g.recipe.signals.map((s) => ({
-                  ...s,
-                  title:
-                    g.recipe.id === 'chicken' &&
-                    g.conditions.allergies.includes('花生') &&
-                    conciseLabel(s.title) === '鸡肉嫩、花生脆'
-                      ? '鸡肉鲜嫩'
-                      : conciseLabel(s.title),
-                })),
               },
             };
           }),
