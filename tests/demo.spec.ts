@@ -7,13 +7,19 @@ import { pathToFileURL } from 'node:url';
 const stored = (page: Page) =>
   page.evaluate(() => JSON.parse(localStorage.getItem('cookpilot.demo.v1')!));
 async function navigateMenu(page: Page, label: string) {
+  while (await page.getByRole('button', { name: '菜单', exact: true }).count() === 0) {
+    const previous = page.url();
+    await page.getByRole('button', { name: '返回', exact: true }).click();
+    await expect(page).not.toHaveURL(previous);
+  }
+  if (label === '首页') return;
   await page.getByRole('button', { name: '菜单', exact: true }).click();
   await page.getByRole('navigation', { name: '主要导航' }).getByRole('button', { name: label, exact: true }).click();
 }
 
 async function generateChicken(page: Page) {
   await page.goto('/');
-  await page.getByRole('button', { name: '菜谱大全', exact: true }).click();
+  await navigateMenu(page, '菜谱大全');
   await page.getByRole('button', { name: '宫保鸡丁', exact: true }).click();
   await expect(page.getByRole('heading', { name: '宫保鸡丁', exact: true })).toBeVisible();
 }
@@ -33,56 +39,53 @@ async function removeSeedChicken(page: Page) {
   await page.reload();
 }
 
-test('我的指南双 tab、首页直达、刷新与旧入口兼容，AI 菜谱和预置列表独立', async ({ page }) => {
+test('AI 菜谱和菜谱大全独立导航，搜索状态保留、刷新与旧入口兼容', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: '菜谱大全', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '我的指南' })).toBeVisible();
-  await expect(page.getByRole('tab')).toHaveText(['AI 菜谱2', '菜谱大全6']);
-  await expect(page.getByRole('tab', { name: /菜谱大全/ })).toHaveAttribute('aria-selected', 'true');
-  await page.getByRole('button', { name: '菜单', exact: true }).click();
-  await expect(page.getByRole('button', { name: '我的指南', exact: true })).toHaveAttribute('aria-current', 'page');
-  await page.getByRole('button', { name: '关闭弹窗' }).click();
-  await expect(page).toHaveURL(/#library\/recipes$/);
+  await navigateMenu(page, '菜谱大全');
+  await expect(page.getByRole('heading', { name: '菜谱大全', exact: true })).toBeVisible();
+  await expect(page.getByRole('tab')).toHaveCount(0);
+  await expect(page).toHaveURL(/#recipes$/);
   await page.reload();
-  await expect(page.getByRole('tab', { name: /菜谱大全/ })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.catalog-recipe')).toHaveCount(6);
 
-  await page.getByRole('tab', { name: /AI 菜谱/ }).click();
-  await page.getByRole('textbox', { name: '搜索我的指南' }).fill('不存在');
+  await navigateMenu(page, 'AI 菜谱');
+  await page.getByRole('textbox', { name: '搜索 AI 菜谱' }).fill('不存在');
   await expect(page.getByRole('heading', { name: '未找到菜谱' })).toBeVisible();
-  await page.getByRole('tab', { name: /菜谱大全/ }).click();
+  await navigateMenu(page, '菜谱大全');
   await page.getByRole('textbox', { name: '搜索菜谱' }).fill('咖喱');
   await expect(page.locator('.catalog-recipe')).toHaveCount(1);
-  await page.getByRole('tab', { name: /AI 菜谱/ }).click();
-  await expect(page.getByRole('textbox', { name: '搜索我的指南' })).toHaveValue('不存在');
+  await navigateMenu(page, 'AI 菜谱');
+  await expect(page.getByRole('textbox', { name: '搜索 AI 菜谱' })).toHaveValue('不存在');
   await page.locator('.search-field').getByRole('button', { name: '清空搜索', exact: true }).click();
   await expect(page.locator('.guide-card')).toHaveCount(2);
 
-  await page.goto('/#recipes');
-  await expect(page).toHaveURL(/#library\/recipes$/);
+  await navigateMenu(page, '菜谱大全');
   await page.getByRole('button', { name: '日式咖喱鸡', exact: true }).click();
   expect((await stored(page)).guides[0].source).toBe('catalog');
   await page.getByRole('button', { name: '返回', exact: true }).click();
-  await expect(page.getByRole('tab', { name: /菜谱大全/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('heading', { name: '菜谱大全', exact: true })).toBeVisible();
   await expect(page.getByRole('textbox', { name: '搜索菜谱' })).toHaveValue('咖喱');
   await page.getByRole('textbox', { name: '搜索菜谱' }).fill('');
   await expect(page.locator('.catalog-recipe')).toHaveCount(6);
-  await page.getByRole('tab', { name: /AI 菜谱/ }).click();
+  await navigateMenu(page, 'AI 菜谱');
   await expect(page.locator('.guide-card')).toHaveCount(2);
 
-  await navigateMenu(page, '开始做菜');
+  await navigateMenu(page, '首页');
   await page.getByRole('textbox', { name: '描述做菜需求' }).fill('日式咖喱鸡');
   await selectSuggested(page, '日式咖喱鸡');
   expect((await stored(page)).guides[0].source).toBe('ai');
   await page.goto('/#library');
+  await expect(page).toHaveURL(/#ai-recipes$/);
   await expect(page.locator('.guide-card')).toHaveCount(3);
   await expect(page.getByText('收藏', { exact: false })).toHaveCount(0);
   await page.screenshot({ path: '.local/library-ai-mobile.png', fullPage: true });
-  await page.getByRole('tab', { name: /菜谱大全/ }).click();
+  await page.goto('/#library/recipes');
+  await expect(page).toHaveURL(/#recipes$/);
   for (const width of [320, 390, 1440]) {
     await page.setViewportSize({ width, height: 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-    await expect(page.getByRole('button', { name: '菜单', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: '返回', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: '菜单', exact: true })).toHaveCount(0);
     await expect(page.locator('.bottom-nav')).toHaveCount(0);
   }
   await page.setViewportSize({ width: 390, height: 844 });
@@ -153,9 +156,9 @@ test('卡片阅读、心得保存、搜索与沿用保存版本', async ({ page 
   await page.getByLabel('我的记录').fill('不放花生很合适，下次还用这个版本。');
   await page.getByRole('button', { name: '保存心得' }).click();
   await page.getByRole('button', { name: '返回', exact: true }).click();
-  await navigateMenu(page, '我的指南');
-  await expect(page.getByRole('heading', { name: '我的指南' })).toBeVisible();
-  await page.getByRole('textbox', { name: '搜索我的指南' }).fill('宫保');
+  await navigateMenu(page, 'AI 菜谱');
+  await expect(page.getByRole('heading', { name: 'AI 菜谱' })).toBeVisible();
+  await page.getByRole('textbox', { name: '搜索 AI 菜谱' }).fill('宫保');
   await expect(page.locator('.guide-card')).toHaveCount(1);
   const finished = (await stored(page)).guides.find((g: any) => g.id === original.id);
   expect(finished.status).toBe('cooking');
@@ -185,9 +188,10 @@ test('首页与指南库移除续做入口，旧制作记录可查看或从头�
   await page.goto('/#home');
   await page.getByRole('button', { name: '新建对话', exact: true }).click();
   await expect(page.getByRole('button', { name: /继续烹饪|继续做/ })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: '菜谱大全', exact: true })).toBeVisible();
-  await navigateMenu(page, '我的指南');
-  await expect(page.getByRole('tab')).toHaveText(['AI 菜谱2', '菜谱大全6']);
+  await expect(page.getByRole('button', { name: '菜谱大全', exact: true })).toHaveCount(0);
+  await navigateMenu(page, 'AI 菜谱');
+  await expect(page.getByRole('heading', { name: 'AI 菜谱', exact: true })).toBeVisible();
+  await expect(page.locator('.guide-card')).toHaveCount(2);
   await expect(page.getByRole('button', { name: /进行中|继续做/ })).toHaveCount(0);
   await expect(page.locator('.guide-status')).not.toContainText([/进行中/]);
 
@@ -312,9 +316,9 @@ test('空状态、删除数据、恢复示例与新增意面菜谱', async ({ pa
   expect((await stored(page)).conversations).toEqual([]);
   await page.reload();
   expect((await stored(page)).conversations).toEqual([]);
-  await navigateMenu(page, '我的指南');
+  await navigateMenu(page, 'AI 菜谱');
   await expect(page.getByRole('heading', { name: '暂无指南' })).toBeVisible();
-  await navigateMenu(page, '开始做菜');
+  await navigateMenu(page, '首页');
   await page.getByRole('textbox', { name: '描述做菜需求' }).fill('我想做意大利面');
   await selectSuggested(page, '番茄罗勒意面');
   await expect(page.getByRole('heading', { name: '番茄罗勒意面', exact: true })).toBeVisible();
@@ -588,11 +592,11 @@ test('菜谱搜索筛选、新增世界家常菜可独立打开，过敏冲突�
   await page.getByRole('button', { name: '通用设置' }).click();
   await page.getByLabel('忌口', { exact: true }).fill('鸡蛋过敏');
   await page.getByRole('button', { name: '保存设置' }).click();
-  await page.getByRole('button', { name: '菜谱大全', exact: true }).click();
+  await navigateMenu(page, '菜谱大全');
   await expect(page.locator('.catalog-recipe')).toHaveCount(6);
   await page.getByRole('button', { name: '番茄炒蛋', exact: true }).click();
   await expect(page.getByRole('status')).toContainText('这道菜含鸡蛋');
-  await expect(page).toHaveURL(/#library\/recipes$/);
+  await expect(page).toHaveURL(/#recipes$/);
   await page.getByRole('button', { name: '西式与日式', exact: true }).click();
   await expect(page.locator('.catalog-recipe')).toHaveCount(3);
   await page.getByRole('textbox', { name: '搜索菜谱' }).fill('咖喱');
@@ -601,8 +605,8 @@ test('菜谱搜索筛选、新增世界家常菜可独立打开，过敏冲突�
   await expect(page.getByRole('heading', { name: '日式咖喱鸡', exact: true })).toBeVisible();
   await expect(page.locator('.step-card:not(.preparation-card)')).toHaveCount(3);
   await page.getByRole('button', { name: '返回', exact: true }).click();
-  await expect(page.getByRole('tab', { name: /菜谱大全/ })).toHaveAttribute('aria-selected', 'true');
-  await navigateMenu(page, '开始做菜');
+  await expect(page.getByRole('heading', { name: '菜谱大全', exact: true })).toBeVisible();
+  await navigateMenu(page, '首页');
   await page.getByRole('textbox', { name: '描述做菜需求' }).fill('番茄罗勒意面');
   await selectSuggested(page, '番茄罗勒意面');
   await expect(page.getByRole('heading', { name: '番茄罗勒意面', exact: true })).toBeVisible();
@@ -652,7 +656,7 @@ for (const [dish, firstStep, steps] of [
 ] as const) {
   test(`${dish}独立指南可完整阅读并保存心得`, async ({ page }) => {
     await page.goto('/');
-    await page.getByRole('button', { name: '菜谱大全', exact: true }).click();
+    await navigateMenu(page, '菜谱大全');
     await page.getByRole('button', { name: dish, exact: true }).click();
     await expect(page.getByRole('heading', { name: dish, exact: true })).toBeVisible();
     await page.getByRole('button', { name: '跳转第 1 步', exact: true }).click();
@@ -756,14 +760,14 @@ test('食材输入先推荐，选中新菜谱才生成并自动入库，再次�
   const before = await stored(page);
   await page.getByRole('textbox', { name: '描述做菜需求' }).fill('鸡肉、土豆，450克鸡肉');
   await page.getByRole('button', { name: '发送消息', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText('正在理解');
+  await expect(page.getByRole('status')).toContainText('正在分析');
   await expect(page.locator('.recommendation')).toHaveCount(3);
   await expect(page).toHaveURL(/#home$/);
   expect((await stored(page)).guides).toEqual(before.guides);
   const curry = page.getByRole('button', { name: '生成菜谱：日式咖喱鸡', exact: true });
   await curry.click();
   await expect(curry).toBeDisabled();
-  await expect(page.getByRole('status')).toContainText('自动加入 AI 菜谱');
+  await expect(curry).toContainText('正在生成');
   await expect(page).toHaveURL(/#cook$/);
   const saved = (await stored(page)).guides[0];
   expect(saved.recipe.title).toBe('日式咖喱鸡');
@@ -772,10 +776,10 @@ test('食材输入先推荐，选中新菜谱才生成并自动入库，再次�
   expect((await stored(page)).guides).toHaveLength(before.guides.length + 1);
   await page.reload();
   await page.getByRole('button', { name: '返回', exact: true }).click();
-  await navigateMenu(page, '我的指南');
-  await page.getByRole('textbox', { name: '搜索我的指南' }).fill('咖喱');
+  await navigateMenu(page, 'AI 菜谱');
+  await page.getByRole('textbox', { name: '搜索 AI 菜谱' }).fill('咖喱');
   await expect(page.locator('.guide-card')).toHaveCount(1);
-  await navigateMenu(page, '开始做菜');
+  await navigateMenu(page, '首页');
   await page.getByRole('textbox', { name: '描述做菜需求' }).fill('想做咖喱鸡，600克鸡肉');
   await selectSuggested(page, '日式咖喱鸡');
   const reused = await stored(page);
@@ -799,8 +803,7 @@ test('别名命中已有菜谱，复用不改变版本、完成记录、复盘�
   await page.getByRole('textbox', { name: '描述做菜需求' }).fill('想做西红柿炒鸡蛋');
   await page.getByRole('button', { name: '发送消息', exact: true }).click();
   const card = page.locator('.recommendation').filter({ hasText: '番茄炒蛋' });
-  await expect(card).toContainText('AI 菜谱 · 已有');
-  await expect(card).toContainText('沿用 v3');
+  await expect(card.locator('.recipe-source')).toHaveText('已有 · v3');
   await card.getByRole('button', { name: '使用已有菜谱：番茄炒蛋', exact: true }).click();
   await expect(page).toHaveURL(/#cook$/);
   const after = await stored(page);
@@ -848,8 +851,8 @@ test('已有版本含当前忌口时禁止复用，不生成同名副本；离�
   await page.getByRole('textbox', { name: '描述做菜需求' }).fill('日式咖喱鸡');
   await page.getByRole('button', { name: '发送消息', exact: true }).click();
   await page.getByRole('button', { name: '生成菜谱：日式咖喱鸡', exact: true }).last().click();
-  await navigateMenu(page, '我的指南');
+  await navigateMenu(page, 'AI 菜谱');
   await page.waitForTimeout(1100);
-  await expect(page).toHaveURL(/#library$/);
+  await expect(page).toHaveURL(/#ai-recipes$/);
   expect((await stored(page)).guides).toEqual(before.guides);
 });

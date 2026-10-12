@@ -1,7 +1,7 @@
 import { recipes } from './data';
 import type { Guide, Preferences, Recipe, RecipeId } from './data';
 
-export type Recommendation = { recipe: Recipe; savedId?: string; reason: string; blocked?: string };
+export type Recommendation = { recipe: Recipe; savedId?: string; blocked?: string };
 export type DiscoveryResult =
   | { kind: 'chat'; text: string }
   | { kind: 'recipes'; text: string; candidates: Recommendation[] };
@@ -69,18 +69,12 @@ export function discover(prompt: string, guides: Guide[], preferences: Preferenc
     if (/快|简单|懒|没时间/.test(text)) score += recipe.minutes <= 20 ? 8 : 0;
     if (/清淡|不辣/.test(text)) score += recipe.tags.includes('不辣') ? 6 : 0;
     const blocked = recipeConflict(saved?.recipe || recipe, preferences, text, !!saved);
-    return { recipe: saved?.recipe || recipe, savedId: saved?.id, blocked, score, index,
-      reason: exact ? '符合你想做的菜' : matched.length ? `用得上${matched.filter((word) => word.length <= 3).join('、') || matched[0]}`
-        : recipe.minutes <= 20 ? '步骤简单，适合快手做一餐' : '换个口味的家常选择' };
+    return { recipe: saved?.recipe || recipe, savedId: saved?.id, blocked, score, index };
   }).sort((a, b) => Number(!!a.blocked) - Number(!!b.blocked) || b.score - a.score || a.index - b.index);
 
   // Keep an explicitly requested conflicting dish visible with a reason, but never selectable.
   const explicitBlocked = ranked.find((item) => item.blocked && item.score >= 100);
   const candidates = explicitBlocked ? [explicitBlocked, ...ranked.filter((item) => !item.blocked).slice(0, 2)]
     : ranked.filter((item) => !item.blocked).slice(0, 3);
-  const matched = ranked.some((item) => item.score >= 10);
-  return { kind: 'recipes', text: !candidates.length ? '这几道示例菜都与当前忌口冲突。可以换些食材再试试。'
-    : explicitBlocked ? '你想做的菜与当前忌口冲突，也为你列出其他选择。'
-    : matched ? '根据你的想法，选了这几道菜。选一道，再展开完整做法。'
-    : '先给你几道家常菜找找灵感。Demo 使用示例推荐，可继续补充食材或口味。', candidates };
+  return { kind: 'recipes', text: !candidates.length ? '暂无符合忌口的菜谱，请更换食材。' : '', candidates };
 }

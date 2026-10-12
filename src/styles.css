@@ -313,21 +313,21 @@ textarea {
   font-size: 12px;
 }
 
-/* A centered starting point with two quiet secondary actions. */
+/* Keep the starting prompt within easy reach below the header. */
 
 .home {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   min-height: 100dvh;
-  padding-top: calc(108px + env(safe-area-inset-top));
+  padding-top: calc(clamp(104px, 18dvh, 160px) + env(safe-area-inset-top));
 }
 
 .prompt-card {
-  margin-bottom: 24px;
+  margin-bottom: 0;
 }
 
 .prompt-card h1 {
-  margin-bottom: 12px;
+  margin-bottom: 24px;
   text-align: center;
   font-size: 29px;
   line-height: 1.4;
@@ -1213,45 +1213,6 @@ textarea {
   height: 34px;
 }
 
-.library-tabs {
-  display: flex;
-  gap: 26px;
-  margin: 0 0 18px;
-  border-bottom: 1px solid var(--line);
-}
-
-.library-tabs button {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 45px;
-  padding: 0 0 10px;
-  font-size: 13px;
-  color: var(--muted);
-}
-
-.library-tabs button > span {
-  font-size: 10px;
-  opacity: 0.8;
-  font-variant-numeric: tabular-nums;
-}
-
-.library-tabs button.active {
-  color: var(--green);
-  font-weight: 600;
-}
-
-.library-tabs button.active::after {
-  content: '';
-  position: absolute;
-  bottom: -1px;
-  left: 0;
-  width: 100%;
-  height: 2px;
-  background: var(--green);
-}
-
 .guide-card {
   border-bottom: 1px solid var(--line);
   padding: 18px 0 12px;
@@ -1589,7 +1550,13 @@ textarea {
   line-height: 1.8;
 }
 
-.sheet-header > .icon-button {
+.sheet-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sheet-header-actions > .icon-button {
   width: 32px;
   height: 32px;
   background: var(--soft);
@@ -2387,7 +2354,7 @@ textarea {
   transform: translateX(-50%);
   width: 100%;
   max-width: 480px;
-  height: calc(76px + env(safe-area-inset-top));
+  height: calc(64px + env(safe-area-inset-top));
   padding: env(safe-area-inset-top) 16px 0;
   gap: 8px;
   background: #fffffff5;
@@ -2432,14 +2399,14 @@ textarea {
   z-index: 20;
 }
 .discovery-turn {
-  scroll-margin-top: calc(100px + env(safe-area-inset-top));
+  scroll-margin-top: calc(84px + env(safe-area-inset-top));
 }
 .home-view.has-timers .home {
   margin-top: 0;
-  padding-top: calc(144px + env(safe-area-inset-top));
+  padding-top: calc(132px + env(safe-area-inset-top));
 }
 .home-view .floating-timer {
-  top: calc(84px + env(safe-area-inset-top));
+  top: calc(72px + env(safe-area-inset-top));
 }
 
 /* A left drawer, aligned with the phone frame on wider screens. */
@@ -2452,7 +2419,7 @@ textarea {
   max-height: 100dvh;
   height: 100dvh;
   margin-left: max(0px, calc((100vw - 480px) / 2));
-  padding: calc(24px + env(safe-area-inset-top)) 18px calc(22px + env(safe-area-inset-bottom));
+  padding: calc(12px + env(safe-area-inset-top)) 18px calc(22px + env(safe-area-inset-bottom));
   border-radius: 0 20px 20px 0;
   animation: drawer-in 0.22s ease-out;
 }
@@ -2460,7 +2427,10 @@ textarea {
   display: none;
 }
 .navigation-drawer .sheet-header {
+  align-items: center;
+  min-height: 44px;
   padding-left: 10px;
+  padding-bottom: 12px;
 }
 .navigation-drawer .sheet-content {
   min-height: 0;
@@ -2495,8 +2465,8 @@ textarea {
   background: var(--tint);
 }
 .conversation-history {
-  margin-top: 24px;
-  padding-top: 22px;
+  margin-top: 18px;
+  padding-top: 18px;
   border-top: 1px solid var(--line);
 }
 .history-heading {
@@ -2539,6 +2509,79 @@ textarea {
   margin: 24px 12px 0;
   line-height: 1.7;
 }
+.global-search-sheet {
+  height: min(660px, 88dvh);
+}
+.global-search-sheet .sheet-content {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.global-search-field {
+  flex-shrink: 0;
+  margin: 4px 4px 16px;
+}
+.global-search-results {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 4px 8px;
+}
+.global-search-group + .global-search-group {
+  margin-top: 20px;
+}
+.global-search-group h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 8px;
+  font-size: 13px;
+}
+.global-search-group h3 > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.global-search-result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 8px;
+  border-radius: 10px;
+  text-align: left;
+}
+.global-search-result:hover {
+  background: var(--soft);
+}
+.global-search-result > svg {
+  color: var(--green);
+}
+.global-search-result > span {
+  flex: 1;
+  min-width: 0;
+}
+.global-search-result b {
+  display: block;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.global-search-result small {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  margin-top: 5px;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--muted);
+}
+.global-search-no-match {
+  padding: 8px 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
 @keyframes drawer-in {
   from { transform: translateX(-100%); }
   to { transform: translateX(0); }
@@ -2566,33 +2609,9 @@ textarea {
 .prompt-input {
   position: relative;
 }
-.prompt-intro {
-  margin-bottom: 24px;
-  color: var(--muted);
-  text-align: center;
-  font-size: 13px;
-  line-height: 1.8;
-}
-.prompt-examples {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
-}
-.prompt-examples button {
-  padding: 7px 9px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  color: var(--muted);
-  font-size: 11px;
-}
-.prompt-examples button:hover {
-  color: var(--green);
-  background: var(--tint);
-}
 .home.home-conversation {
   align-items: flex-start;
-  padding-top: calc(100px + env(safe-area-inset-top));
+  padding-top: calc(84px + env(safe-area-inset-top));
   padding-bottom: calc(196px + env(safe-area-inset-bottom));
 }
 .discovery-conversation {
@@ -2658,12 +2677,6 @@ textarea {
   background: var(--tint);
   color: var(--green);
 }
-.recommendation-reason {
-  margin-top: 8px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.7;
-}
 .recommendation-meta,
 .recommendation-meta > span {
   display: flex;
@@ -2676,14 +2689,10 @@ textarea {
   color: var(--muted);
   font-size: 11px;
 }
-.recommendation-saved-note,
 .recommendation-warning {
   margin-top: 10px;
   font-size: 11px;
   line-height: 1.7;
-  color: var(--green);
-}
-.recommendation-warning {
   color: #96603c;
 }
 .recommendation-select {
@@ -2705,28 +2714,6 @@ textarea {
 }
 .home-conversation .prompt-card textarea {
   height: 90px;
-}
-.catalog-entry {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  min-height: 60px;
-  padding: 16px 18px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  font-size: 13px;
-  text-align: left;
-}
-.catalog-entry > svg:first-child {
-  color: var(--green);
-}
-.catalog-entry > svg:last-child {
-  margin-left: auto;
-  color: var(--muted);
-}
-.catalog-entry:hover {
-  background: var(--soft);
 }
 .catalog-search {
   display: flex;
@@ -2884,9 +2871,7 @@ textarea {
   color: #fff;
 }
 
-/* A complete guide {
-  padding-top: 28px;
-}
+/* Shared guide content. */
 .recipe-ingredient-table {
   width: 100%;
   border-collapse: collapse;
@@ -3219,11 +3204,6 @@ textarea {
 }
 .cards-header-actions button {
   padding: 0 4px;
-}
-.notes-form label {
-  display: block;
-  font-size: 14px;
-  margin-bottom: 12px;
 }
 .notes-form textarea {
   display: block;

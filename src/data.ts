@@ -2,7 +2,7 @@ import { createDemoConversations, retainConversations } from './conversations';
 import type { Conversation } from './conversations';
 
 export type RecipeId = 'chicken' | 'eggs' | 'beef' | 'pasta' | 'curry' | 'omelette';
-export type View = 'home' | 'cook' | 'library' | 'settings';
+export type View = 'home' | 'cook' | 'ai-recipes' | 'recipes' | 'settings';
 export type GuideSource = 'ai' | 'catalog';
 export type Conditions = {
   servings: number;
