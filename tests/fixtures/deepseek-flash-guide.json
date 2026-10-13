@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "title": "西红柿炒鸡蛋",
+  "aliases": ["番茄炒蛋"],
+  "cuisine": "中式",
+  "minutes": 15,
+  "difficulty": "简单",
+  "conditions": "常规一盘，番茄400g，鸡蛋3个，清淡不放辣椒",
+  "cookware": ["炒锅"],
+  "keyPoints": [
+    "鸡蛋先炒后盛出，最后回锅合炒保持嫩滑。",
+    "清淡调味只用盐，不额外加辣椒或重口调料。"
+  ],
+  "ingredients": [
+    {
+      "id": "tomato",
+      "name": "番茄",
+      "quantity": 400,
+      "unit": "g",
+      "amountText": "",
+      "group": "主料",
+      "note": ""
+    },
+    {
+      "id": "egg",
+      "name": "鸡蛋",
+      "quantity": 3,
+      "unit": "个",
+      "amountText": "",
+      "group": "主料",
+      "note": ""
+    },
+    {
+      "id": "oil",
+      "name": "食用油",
+      "quantity": 15,
+      "unit": "ml",
+      "amountText": "",
+      "group": "调味",
+      "note": ""
+    },
+    {
+      "id": "salt",
+      "name": "盐",
+      "quantity": 2,
+      "unit": "g",
+      "amountText": "",
+      "group": "调味",
+      "note": ""
+    }
+  ],
+  "prep": [
+    {
+      "id": "prep_cut",
+      "title": "处理食材",
+      "action": "番茄洗净去蒂切块；将 {{egg}} 打散，加入 {{salt}} 搅匀备用。",
+      "uses": [
+        {
+          "ingredientId": "tomato",
+          "fraction": 0
+        },
+        {
+          "ingredientId": "egg",
+          "fraction": 0
+        },
+        {
+          "ingredientId": "salt",
+          "fraction": 0.5
+        }
+      ],
+      "seconds": 0,
+      "parallel": ""
+    }
+  ],
+  "steps": [
+    {
+      "id": "step_egg",
+      "title": "炒蛋盛出",
+      "action": "中火热锅，加入 {{oil}}，倒入 {{egg}}，轻推至凝固后盛出。",
+      "uses": [
+        {
+          "ingredientId": "oil",
+          "fraction": 0.6666667
+        },
+        {
+          "ingredientId": "egg",
+          "fraction": 1
+        }
+      ],
+      "heat": "中火",
+      "seconds": 60,
+      "signal": "蛋液基本凝固、颜色嫩黄，表面无流动生蛋液。",
+      "tip": "油温不要过高，蛋液刚凝固就盛出更嫩。",
+      "dependsOn": []
+    },
+    {
+      "id": "step_finish",
+      "title": "炒番茄与合炒",
+      "action": "锅中补 {{oil}}，下 {{tomato}} 和 {{salt}} 炒至出汁，倒回炒好的鸡蛋翻匀。",
+      "uses": [
+        {
+          "ingredientId": "oil",
+          "fraction": 0.3333333
+        },
+        {
+          "ingredientId": "tomato",
+          "fraction": 1
+        },
+        {
+          "ingredientId": "salt",
+          "fraction": 0.5
+        }
+      ],
+      "heat": "中火",
+      "seconds": 240,
+      "signal": "番茄软化出汁、颜色变深红，鸡蛋均匀裹上汤汁。",
+      "tip": "根据番茄成熟度观察，计时仅作参考；保持清淡不额外加辣椒。",
+      "dependsOn": ["step_egg"]
+    }
+  ]
+}

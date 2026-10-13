@@ -1,0 +1,17 @@
+{
+  "id": "3d52ac77-43a1-4a55-a092-e38e0d9c9f6d",
+  "object": "chat.completion",
+  "created": 1791871273,
+  "model": "deepseek-flash",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "{\"text\":\"辣椒炒牛肉是一道香辣下饭的快手菜，这里给你推荐3道候选。\",\"candidates\":[{\"name\":\"辣椒炒牛肉\",\"aliases\":[\"小炒黄牛肉\"],\"minutes\":15,\"difficulty\":\"简单\",\"summary\":\"牛里脊逆纹切片腌制，配青红辣椒大火快炒，香辣嫩滑，用生抽、蚝油、料酒、淀粉调味。\",\"blocked\":\"\"},{\"name\":\"青椒牛肉丝\",\"aliases\":[],\"minutes\":20,\"difficulty\":\"简单\",\"summary\":\"牛肉切丝上浆滑炒，加青椒丝同炒，口味清爽微辣，用料为牛肉、青椒、蒜、生抽、淀粉。\",\"blocked\":\"\"},{\"name\":\"杭椒牛柳\",\"aliases\":[],\"minutes\":20,\"difficulty\":\"中等\",\"summary\":\"牛柳条腌制过油，与杭椒段爆炒，辣香浓郁带黑椒风味，用黑胡椒、蚝油、老抽调味。\",\"blocked\":\"\"}]}"
+      },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ]
+}

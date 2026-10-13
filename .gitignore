@@ -5,3 +5,8 @@ playwright-report/
 *.tsbuildinfo
 .local/
 archive/demo/demo.html
+.env
+.env.*
+!.env.example
+coverage/
+playwright/.cache/
