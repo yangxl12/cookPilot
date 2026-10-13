@@ -4,3 +4,4 @@ test-results/
 playwright-report/
 *.tsbuildinfo
 .local/
+archive/demo/demo.html

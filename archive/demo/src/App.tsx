@@ -1851,7 +1851,6 @@ function App() {
       {sheet === 'steps' && guide && (
         <Sheet
           title="全部步骤"
-          subtitle={`${guide.recipe.title} · 已完成 ${guide.completed.length}/${guide.recipe.steps.length} 步`}
           onClose={() => setSheet(null)}
         >
           <div className="full-steps">
@@ -1861,12 +1860,6 @@ function App() {
                 <b>先备菜</b>
                 <small>{guide.recipe.prep.map((p) => p.title).join(' → ')}</small>
               </span>
-              <button className="text-button" onClick={() => {
-                updateGuide((g) => ({ ...g, currentCard: 0 }));
-                setSheet(null);
-              }}>
-                查看
-              </button>
             </div>
             {guide.recipe.steps.map((step, index) => (
               <button

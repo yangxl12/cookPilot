@@ -393,12 +393,17 @@ test('指南直接进入准备卡片，内容顺序固定，不展示器具或�
   await page.getByRole('button', { name: '关闭弹窗' }).click();
   await page.getByRole('button', { name: '跳转第 2 步' }).click();
   await page.getByRole('button', { name: '查看全部步骤' }).click();
-  await page.locator('.full-prep').getByRole('button', { name: '查看', exact: true }).click();
+  await expect(page.locator('.full-prep small')).toHaveText(
+    (await stored(page)).guides[0].recipe.prep.map((prep: any) => prep.title).join(' → '),
+  );
+  await expect(page.locator('.full-prep').getByRole('button')).toHaveCount(0);
+  await page.getByRole('button', { name: '关闭弹窗' }).click();
+  await page.getByRole('button', { name: '跳转准备卡片' }).click();
   await expect(page.locator('.step-card.active')).toHaveClass(/preparation-card/);
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
-test('步骤名称导航可横向滚动，当前步骤居中且卡片只保留烹饪信息', async ({ page }) => {
+test('步骤名称导航紧凑单行显示，溢出时可滚动且卡片只保留烹饪信息', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await generateChicken(page);
   const navigation = page.getByRole('navigation', { name: '跳转步骤' });
@@ -413,9 +418,12 @@ test('步骤名称导航可横向滚动，当前步骤居中且卡片只保留�
     await expect.poll(() => navigation.evaluate((element) => {
       const viewport = element.getBoundingClientRect();
       const active = element.querySelector('[aria-current="step"]')!.getBoundingClientRect();
-      return Math.abs(active.left + active.width / 2 - viewport.left - viewport.width / 2);
+      const centered = element.scrollLeft + active.left + active.width / 2 - viewport.left - viewport.width / 2;
+      const target = Math.max(0, Math.min(centered, element.scrollWidth - element.clientWidth));
+      return Math.abs(element.scrollLeft - target);
     })).toBeLessThan(2);
-    expect(await navigation.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+    if (width === 320 || width === 1440)
+      expect(await navigation.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(width === 320);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     const active = page.locator('.step-card.active');
     await expect(active.locator('.step-number, .signal-icon, .detail-disclosure')).toHaveCount(0);

@@ -158,7 +158,7 @@ AI 返回结构化内容，由固定组件渲染，不让模型生成整页 HTML
 
 ## 5. UI 实现基准
 
-整体直接参考当前 Demo 的视觉与布局，复用 [src/styles.css](../src/styles.css) 的设计参数，保持简洁、便于厨房阅读和点按。
+整体直接参考当前 Demo 的视觉与布局，复用 [原型样式 archive/demo/src/styles.css](../archive/demo/src/styles.css) 的设计参数，保持简洁、便于厨房阅读和点按。
 
 | 项目 | 要求 |
 | --- | --- |
