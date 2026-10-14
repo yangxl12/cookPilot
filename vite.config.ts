@@ -4,6 +4,8 @@ import { VitePWA } from 'vite-plugin-pwa';
 import { readFile } from 'node:fs/promises';
 
 export default defineConfig({
+  // Pages supplies /<repo>/; local development and root deployments default to /.
+  base: process.env.VITE_BASE_PATH || '/',
   build: {
     // The offline catalog is ~650 KB raw / ~83 KB gzip. Keep app/vendor warnings meaningful.
     chunkSizeWarningLimit: 700,
@@ -55,19 +57,17 @@ export default defineConfig({
         name: 'CookPilot 烹饪助手',
         short_name: 'CookPilot',
         lang: 'zh-CN',
-        start_url: '/',
-        scope: '/',
         display: 'standalone',
         background_color: '#ffffff',
         theme_color: '#28664e',
         icons: [
-          { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+          { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
+          { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
         ],
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
-        navigateFallback: '/index.html',
+        navigateFallback: 'index.html',
         runtimeCaching: [],
         cleanupOutdatedCaches: true,
       },

@@ -256,7 +256,9 @@ export function App() {
   useEffect(() => {
     if (!ready || !('serviceWorker' in navigator) || import.meta.env.DEV) return;
     // Waiting workers are deliberately not activated while the user is cooking.
-    void navigator.serviceWorker.register('/sw.js').catch(() => undefined);
+    void navigator.serviceWorker
+      .register(`${import.meta.env.BASE_URL}sw.js`)
+      .catch(() => undefined);
   }, [ready]);
   if (fatal)
     return (

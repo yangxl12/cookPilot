@@ -49,7 +49,23 @@ npm run format:check
 npm run preview          # http://localhost:4173
 ```
 
-浏览器测试使用本机 Google Chrome。`dist/` 可部署到稳定的 HTTPS 来源，所有静态资源需要保留；Hash 路由不需要后端页面路由。部署目录应为站点根路径。正式部署中不存在本地 Key 初始化接口，发布产物不包含开发配置。
+浏览器测试使用本机 Google Chrome。`dist/` 可部署到稳定的 HTTPS 来源，所有静态资源需要保留；Hash 路由不需要后端页面路由。默认部署到站点根路径，子目录部署时在构建前设置 `VITE_BASE_PATH`（含前后 `/`，例如 `/cookPilot/`）；页面资源与 PWA 都使用该路径。正式部署中不存在本地 Key 初始化接口，发布产物不包含开发配置。
+
+### GitHub Pages
+
+在仓库 **Settings → Pages → Build and deployment → Source** 选择 **GitHub Actions**。推送到 `main` 后，`.github/workflows/deploy-pages.yml` 自动安装依赖、按 Pages 路径构建，只上传并部署 `dist/`。也可以在 Actions 中手动运行 **Deploy to GitHub Pages**。
+
+本站地址为 https://yangxl12.github.io/cookPilot/ 。不要将仓库根目录作为静态站点直接发布：根目录 `index.html` 的 `/src/main.tsx` 是 Vite 开发入口，需要构建后才会替换成浏览器可运行的 JavaScript。
+
+本地复现 Pages 子路径（PowerShell）：
+
+```powershell
+$env:VITE_BASE_PATH = '/cookPilot/'
+npm run build
+npm run test:pwa
+npm run preview          # http://localhost:4173/cookPilot/
+# 完成后执行 Remove-Item Env:VITE_BASE_PATH 恢复根路径构建
+```
 
 `npm run test:live` **会调用真实模型**，仅手动按需执行，需要先启动开发服务并准备本机私密配置。一次流程包含连接、推荐、一道完整生成、问答和一次调整；完整生成最多追加一次内容修复，其他错误不自动重试。结果写入 `.local/`，不纳入 Git。普通测试不会消耗真实模型用量。
 

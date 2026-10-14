@@ -13,7 +13,7 @@ test('正式构建使用最新 DeepSeek 快速配置，原始辣椒炒牛肉响�
     expect(body.response_format).toEqual({ type: 'json_object' });
     await route.fulfill({ json: realRecommendation });
   });
-  await page.goto('/#settings');
+  await page.goto('./#settings');
   await page.getByRole('button', { name: '添加', exact: true }).click();
   const presets = page.getByRole('combobox', { name: '快速配置' });
   await expect(presets).toHaveValue('deepseek-flash');
@@ -24,7 +24,7 @@ test('正式构建使用最新 DeepSeek 快速配置，原始辣椒炒牛肉响�
   await page.locator('input[aria-label="API Key"]').fill('test-key-no-real-requests');
   await page.getByRole('button', { name: '保存模型' }).click();
   await expect(page.getByRole('button', { name: '使用DeepSeek Flash' })).toBeVisible();
-  await page.goto('/#home');
+  await page.goto('./#home');
   await page.getByRole('textbox', { name: '描述做菜需求' }).fill('辣椒炒牛肉');
   await page.getByRole('button', { name: '发送消息' }).click();
   await expect(page.locator('.recommendation')).toHaveCount(3);
@@ -42,11 +42,11 @@ test('正式构建使用最新 DeepSeek 快速配置，原始辣椒炒牛肉响�
 });
 
 test('正式构建无私密配置入口；离线恢复指南、心得、计时与预置内容', async ({ page, context }) => {
-  await page.goto('/');
+  await page.goto('./');
   await expect(page.getByRole('heading', { name: '想做什么菜？' })).toBeVisible();
   await expect(page.getByRole('button', { name: '选择模型' })).toBeVisible();
   const body = await (
-    await page.request.get('/__local-model', { headers: { 'X-CookPilot-Local': '1' } })
+    await page.request.get('./__local-model', { headers: { 'X-CookPilot-Local': '1' } })
   ).text();
   expect(body).not.toContain('deepseek-flash');
   expect(body).not.toContain('"key"');
@@ -55,7 +55,7 @@ test('正式构建无私密配置入口；离线恢复指南、心得、计时�
   });
   await page.reload();
   await page.waitForFunction(() => !!navigator.serviceWorker.controller);
-  await page.goto('/#recipes');
+  await page.goto('./#recipes');
   await page.getByRole('textbox', { name: '搜索菜名' }).fill('西红柿炒鸡蛋');
   await page.getByRole('button', { name: /西红柿炒鸡蛋 中式/ }).click();
   await page.getByRole('button', { name: '心得', exact: true }).click();
@@ -79,13 +79,13 @@ test('正式构建无私密配置入口；离线恢复指南、心得、计时�
   await page.getByRole('button', { name: '计时器', exact: true }).click();
   await expect(page.getByText('已暂停', { exact: false })).toBeVisible();
   await page.getByRole('button', { name: '关闭弹窗' }).click();
-  await page.goto('/#recipes');
+  await page.goto('./#recipes');
   await expect(page.getByText('200 道家常菜')).toBeVisible();
   const requests: string[] = [];
   page.on('request', (request) => {
     if (request.url().includes('api.deepseek.com')) requests.push(request.url());
   });
-  await page.goto('/#home');
+  await page.goto('./#home');
   await page.getByRole('textbox', { name: '描述做菜需求' }).fill('做饭');
   await page.getByRole('button', { name: '发送消息' }).click();
   await expect(page.getByRole('heading', { name: '我的厨房' })).toBeVisible();
