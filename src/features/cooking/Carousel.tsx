@@ -14,25 +14,53 @@ export function Carousel({
   const track = useRef<HTMLDivElement>(null);
   const navigation = useRef<HTMLElement>(null);
   const selected = useRef(index);
+  const select = useRef(onSelect);
+  const count = useRef(labels.length);
+  const stride = useRef(0);
   selected.current = index;
+  select.current = onSelect;
+  count.current = labels.length;
   useEffect(() => {
     const element = track.current;
     if (!element) return;
     const align = () => {
       const card = element.firstElementChild as HTMLElement | null;
-      if (card)
-        element.scrollTo({ left: selected.current * (card.offsetWidth + 12), behavior: 'instant' });
+      if (card) {
+        stride.current = card.offsetWidth + 12;
+        element.scrollTo({ left: selected.current * stride.current, behavior: 'instant' });
+      }
     };
     align();
     const observer = new ResizeObserver(align);
     observer.observe(element);
-    return () => observer.disconnect();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const settled = () => {
+      clearTimeout(timeout);
+      if (!stride.current) return;
+      const next = Math.max(
+        0,
+        Math.min(count.current - 1, Math.round(element.scrollLeft / stride.current)),
+      );
+      if (next !== selected.current) select.current(next);
+    };
+    const scroll = () => {
+      clearTimeout(timeout);
+      timeout = setTimeout(settled, 150);
+    };
+    element.addEventListener('scrollend', settled);
+    const supportsScrollEnd = Reflect.has(element, 'onscrollend');
+    if (!supportsScrollEnd) element.addEventListener('scroll', scroll, { passive: true });
+    return () => {
+      observer.disconnect();
+      clearTimeout(timeout);
+      element.removeEventListener('scrollend', settled);
+      element.removeEventListener('scroll', scroll);
+    };
   }, []);
   useEffect(() => {
     const element = track.current;
-    const card = element?.firstElementChild as HTMLElement | null;
-    if (card && element)
-      element.scrollTo({ left: index * (card.offsetWidth + 12), behavior: 'instant' });
+    if (element && stride.current && Math.abs(element.scrollLeft - index * stride.current) > 2)
+      element.scrollTo({ left: index * stride.current, behavior: 'instant' });
     const button = navigation.current?.children[index] as HTMLElement | undefined;
     if (button && navigation.current) {
       const nav = navigation.current;
@@ -58,19 +86,6 @@ export function Carousel({
               Math.max(0, Math.min(labels.length - 1, index + (e.key === 'ArrowRight' ? 1 : -1))),
             );
           }
-        }}
-        onScroll={(e) => {
-          const element = e.currentTarget;
-          const card = element.firstElementChild as HTMLElement;
-          const stride = card.offsetWidth + 12;
-          const next = Math.round(element.scrollLeft / stride);
-          if (
-            Math.abs(element.scrollLeft - next * stride) < 2 &&
-            next !== selected.current &&
-            next >= 0 &&
-            next < labels.length
-          )
-            onSelect(next);
         }}
       >
         {children.map((child, i) => (

@@ -1,11 +1,8 @@
 import { createContext, useContext } from 'react';
 import type {
   Recipe,
-  RecipeVersion,
   CookingSession,
   Timer,
-  Conversation,
-  CookingMessage,
   ModelConfig,
   Preferences,
   Task,
@@ -19,11 +16,8 @@ export type Route = {
 };
 export type Data = {
   recipes: Recipe[];
-  versions: RecipeVersion[];
   sessions: CookingSession[];
   timers: Timer[];
-  conversations: Conversation[];
-  cookingMessages: CookingMessage[];
   models: ModelConfig[];
   preferences: Preferences;
   activeModelId: string;

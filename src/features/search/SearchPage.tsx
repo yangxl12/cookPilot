@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Search, X } from 'lucide-react';
 import { useApp, type Route } from '../../app/context';
 import { catalog } from '../../assets/recipes';
 import { contentSearchText, isExpired } from '../../domain/rules';
 import { db, setSetting } from '../../storage/db';
 import { openBuiltin } from '../../storage/repository';
-import { PageHeader } from '../recipes/RecipePages';
+import { PageHeader } from '../../shared/PageHeader';
+import { usePagedItems } from '../../shared/usePagedItems';
 
 const sources = [
   { id: 'ai', label: 'AI 菜谱' },
@@ -21,6 +23,7 @@ type SearchResult = {
   route?: Route;
   builtinId?: string;
   conversationId?: string;
+  searchText: string;
 };
 
 function initialSearch() {
@@ -40,17 +43,24 @@ function Highlight({ text, terms }: { text: string; terms: string[] }) {
 
 function snippet(body: string, terms: string[]) {
   const text = body.replace(/\s+/g, ' ').trim();
-  const positions = terms.map((term) => text.toLowerCase().indexOf(term)).filter((n) => n >= 0);
+  const lower = text.toLowerCase();
+  const positions = terms.map((term) => lower.indexOf(term)).filter((n) => n >= 0);
   const start = positions.length ? Math.max(0, Math.min(...positions) - 24) : 0;
   return `${start ? '…' : ''}${text.slice(start, start + 110)}${text.length > start + 110 ? '…' : ''}`;
 }
 
 export function SearchPage() {
   const app = useApp();
-  const { recipes, versions, sessions, conversations } = app.data;
+  const { recipes, sessions } = app.data;
+  const versions = useLiveQuery(() => db.versions.toArray(), []);
+  const conversations = useLiveQuery(() => db.conversations.toArray(), []);
   const [query, setQuery] = useState(initialSearch);
   const input = useRef<HTMLInputElement>(null);
-  const terms = [...new Set(query.toLowerCase().trim().split(/\s+/).filter(Boolean))];
+  const deferredQuery = useDeferredValue(query);
+  const terms = useMemo(
+    () => [...new Set(deferredQuery.toLowerCase().trim().split(/\s+/).filter(Boolean))],
+    [deferredQuery],
+  );
 
   useEffect(() => {
     input.current?.focus();
@@ -75,40 +85,48 @@ export function SearchPage() {
     window.scrollTo(0, 0);
   }, [query]);
 
-  const all = useMemo<SearchResult[]>(
-    () => [
+  const all = useMemo<SearchResult[]>(() => {
+    const aiIds = new Set(
+      recipes.filter((recipe) => recipe.source === 'ai').map((recipe) => recipe.id),
+    );
+    const byId = new Map(versions?.map((version) => [version.id, version]));
+    const changes = new Map<string, string[]>();
+    const contentText = new Map<string, string>();
+    for (const version of versions ?? []) {
+      const list = changes.get(version.recipeId) ?? [];
+      list.push(version.change);
+      changes.set(version.recipeId, list);
+    }
+    const results: Omit<SearchResult, 'searchText'>[] = [
       ...sessions
-        .filter(
-          (session) => recipes.find((recipe) => recipe.id === session.recipeId)?.source === 'ai',
-        )
+        .filter((session) => aiIds.has(session.recipeId))
         .sort((a, b) => b.createdAt - a.createdAt)
-        .flatMap((session): SearchResult[] => {
-          const version = versions.find((item) => item.id === session.versionId);
+        .flatMap((session): Omit<SearchResult, 'searchText'>[] => {
+          const version = byId.get(session.versionId);
           if (!version) return [];
+          if (!contentText.has(version.id))
+            contentText.set(version.id, contentSearchText(version.content));
           return [
             {
               id: session.id,
               title: version.content.title,
-              body: `${contentSearchText(version.content)} ${session.note} ${versions
-                .filter((item) => item.recipeId === session.recipeId)
-                .map((item) => item.change)
-                .join(' ')}`,
+              body: `${contentText.get(version.id)} ${session.note} ${changes.get(session.recipeId)?.join(' ') ?? ''}`,
               source: 'ai',
               route: { page: 'cook', sessionId: session.id },
             },
           ];
         }),
-      ...catalog.map((recipe): SearchResult => ({
+      ...catalog.map((recipe) => ({
         id: recipe.id,
         title: recipe.content.title,
         body: `${recipe.sourceText} ${contentSearchText(recipe.content)}`,
-        source: 'catalog',
+        source: 'catalog' as const,
         builtinId: recipe.id,
       })),
-      ...conversations
+      ...(conversations ?? [])
         .filter((conversation) => !isExpired(conversation.lastSentAt))
         .sort((a, b) => b.lastSentAt - a.lastSentAt)
-        .map((conversation): SearchResult => ({
+        .map((conversation) => ({
           id: conversation.id,
           title: conversation.title,
           body: conversation.messages
@@ -117,38 +135,52 @@ export function SearchPage() {
                 `${message.text} ${message.candidates?.map((recipe) => `${recipe.name} ${recipe.summary}`).join(' ') ?? ''}`,
             )
             .join(' '),
-          source: 'conversations',
+          source: 'conversations' as const,
           conversationId: conversation.id,
         })),
-    ],
-    [recipes, versions, sessions, conversations],
-  );
+    ];
+    return results.map((result) => ({
+      ...result,
+      searchText: `${result.title} ${result.body}`.toLowerCase(),
+    }));
+  }, [recipes, versions, sessions, conversations]);
 
-  const matches = terms.length
-    ? all.filter((result) =>
-        terms.every((term) => `${result.title} ${result.body}`.toLowerCase().includes(term)),
-      )
-    : [];
+  const matches = useMemo(
+    () =>
+      terms.length
+        ? all.filter((result) => terms.every((term) => result.searchText.includes(term)))
+        : [],
+    [all, terms],
+  );
   const chooseQuery = (value: string) => {
     setQuery(value);
     input.current?.focus();
   };
-  const open = async (result: SearchResult) => {
-    if (result.conversationId) {
-      await app.cancel();
-      await setSetting('activeConversationId', result.conversationId);
-      await app.navigate({ page: 'home' });
-    } else if (result.builtinId) {
-      const session = await openBuiltin(
-        catalog.find((recipe) => recipe.id === result.builtinId)!,
-        app.data.preferences,
-      );
-      await app.navigate({ page: 'cook', sessionId: session.id });
-    } else if (result.route) {
-      await db.sessions.update(result.route.sessionId!, { currentCard: 0 });
-      await app.navigate(result.route);
-    }
-  };
+  const open = useCallback(
+    async (result: SearchResult) => {
+      if (result.conversationId) {
+        await app.cancel();
+        await setSetting('activeConversationId', result.conversationId);
+        await app.navigate({ page: 'home' });
+      } else if (result.builtinId) {
+        const session = await openBuiltin(
+          catalog.find((recipe) => recipe.id === result.builtinId)!,
+          app.data.preferences,
+        );
+        await app.navigate({ page: 'cook', sessionId: session.id });
+      } else if (result.route) {
+        await db.sessions.update(result.route.sessionId!, { currentCard: 0 });
+        await app.navigate(result.route);
+      }
+    },
+    [app],
+  );
+  const select = useCallback(
+    (result: SearchResult) => {
+      void app.safe(() => open(result));
+    },
+    [app.safe, open],
+  );
 
   return (
     <>
@@ -189,42 +221,70 @@ export function SearchPage() {
           </form>
         </div>
 
-        {terms.length > 0 && (
-          <div className="search-results">
-            {!matches.length && (
-              <p className="search-empty" role="status">
-                没有匹配结果
-              </p>
-            )}
-            {sources.map((source) => {
-              const rows = matches.filter((result) => result.source === source.id);
-              return rows.length ? (
-                <section
-                  className="search-group"
-                  key={source.id}
-                  aria-label={`${source.label}搜索结果`}
-                >
-                  <h2>{source.label}</h2>
-                  {rows.map((result) => (
-                    <button
-                      className="search-result"
-                      key={result.id}
-                      onClick={() => void app.safe(() => open(result))}
-                    >
-                      <strong>
-                        <Highlight text={result.title} terms={terms} />
-                      </strong>
-                      <p>
-                        <Highlight text={snippet(result.body, terms)} terms={terms} />
-                      </p>
-                    </button>
-                  ))}
-                </section>
-              ) : null;
-            })}
-          </div>
-        )}
+        {terms.length > 0 && <SearchResults matches={matches} terms={terms} onSelect={select} />}
       </main>
     </>
+  );
+}
+
+const SearchResults = memo(function SearchResults({
+  matches,
+  terms,
+  onSelect,
+}: {
+  matches: SearchResult[];
+  terms: string[];
+  onSelect: (result: SearchResult) => void;
+}) {
+  return (
+    <div className="search-results">
+      {!matches.length && (
+        <p className="search-empty" role="status">
+          没有匹配结果
+        </p>
+      )}
+      {sources.map((source) => {
+        const rows = matches.filter((result) => result.source === source.id);
+        return rows.length ? (
+          <SearchGroup
+            key={source.id}
+            label={source.label}
+            rows={rows}
+            terms={terms}
+            onSelect={onSelect}
+          />
+        ) : null;
+      })}
+    </div>
+  );
+});
+
+function SearchGroup({
+  label,
+  rows,
+  terms,
+  onSelect,
+}: {
+  label: string;
+  rows: SearchResult[];
+  terms: string[];
+  onSelect: (result: SearchResult) => void;
+}) {
+  const { visible, sentinel, hasMore } = usePagedItems(rows, terms.join('\0'));
+  return (
+    <section className="search-group" aria-label={`${label}搜索结果`}>
+      <h2>{label}</h2>
+      {visible.map((result) => (
+        <button className="search-result" key={result.id} onClick={() => onSelect(result)}>
+          <strong>
+            <Highlight text={result.title} terms={terms} />
+          </strong>
+          <p>
+            <Highlight text={snippet(result.body, terms)} terms={terms} />
+          </p>
+        </button>
+      ))}
+      {hasMore && <div className="list-sentinel" ref={sentinel} aria-hidden="true" />}
+    </section>
   );
 }

@@ -5,10 +5,12 @@ import { db } from '../../storage/db';
 import { startTimer, toggleTimer } from '../../storage/repository';
 import { formatTime, timerRemaining } from '../../domain/rules';
 import { uid } from '../../domain/schema';
+import { useTimerClock } from './TimerClock';
 import { Sheet } from '../../shared/Sheet';
 
 export function Timers({ onClose }: { onClose: () => void }) {
   const app = useApp();
+  const time = useTimerClock(app.data.timers.some((t) => t.status === 'running'));
   const [name, setName] = useState('');
   const [minutes, setMinutes] = useState('5');
   const sessionId = app.route.sessionId;
@@ -20,7 +22,7 @@ export function Timers({ onClose }: { onClose: () => void }) {
       {app.data.timers.map((timer) => {
         const session = app.data.sessions.find((s) => s.id === timer.sessionId);
         const title = app.data.recipes.find((r) => r.id === session?.recipeId)?.name;
-        const remaining = timerRemaining(timer);
+        const remaining = timerRemaining(timer, time);
         return (
           <div className={`timer-row ${remaining === 0 ? 'timer-done' : ''}`} key={timer.id}>
             <div>

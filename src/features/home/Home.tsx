@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import Dexie from 'dexie';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight,
   ChefHat,
@@ -13,19 +15,77 @@ import { useApp } from '../../app/context';
 import { db, setSetting } from '../../storage/db';
 import { commitGeneration, findExisting, reuseRecipe } from '../../storage/repository';
 import { uid, type Candidate, type Content, type Conversation } from '../../domain/schema';
-import { restrictionConflict, nameMatches, effectivePreferences } from '../../domain/rules';
+import { restrictionConflict, identity, effectivePreferences } from '../../domain/rules';
 import { recommend, generate } from '../../services/ai/cooking';
 
 export function Home() {
   const app = useApp();
   const { data, busy } = app;
-  const conversation = data.conversations.find((c) => c.id === data.activeConversationId);
-  const preferences = effectivePreferences(
-    data.preferences,
-    conversation?.messages
-      .filter((m) => m.role === 'user')
-      .map((m) => m.text)
-      .join('\n') ?? '',
+  const conversationSnapshot = useLiveQuery(
+    async () => ({
+      id: data.activeConversationId,
+      conversation: data.activeConversationId
+        ? await db.conversations.get(data.activeConversationId)
+        : undefined,
+    }),
+    [data.activeConversationId],
+  );
+  const conversationReady =
+    !data.activeConversationId || conversationSnapshot?.id === data.activeConversationId;
+  const conversation =
+    conversationSnapshot?.id === data.activeConversationId
+      ? conversationSnapshot.conversation
+      : undefined;
+  const recipesByName = useMemo(() => {
+    const names = new Map<string, (typeof data.recipes)[number]>();
+    for (const recipe of data.recipes)
+      if (recipe.source === 'ai')
+        for (const name of [recipe.name, ...recipe.aliases])
+          if (!names.has(identity(name))) names.set(identity(name), recipe);
+    return names;
+  }, [data.recipes]);
+  const recipeIds = useMemo(
+    () => [
+      ...new Set(
+        conversation?.messages.flatMap(
+          (message) =>
+            message.candidates?.flatMap((candidate) => {
+              const recipe = recipesByName.get(identity(candidate.name));
+              return recipe ? [recipe.id] : [];
+            }) ?? [],
+        ) ?? [],
+      ),
+    ],
+    [conversation, recipesByName],
+  );
+  const latestVersions = useLiveQuery(
+    async () =>
+      new Map(
+        (
+          await Promise.all(
+            recipeIds.map((id) =>
+              db.versions
+                .where('[recipeId+number]')
+                .between([id, Dexie.minKey], [id, Dexie.maxKey])
+                .last(),
+            ),
+          )
+        )
+          .filter((v) => v !== undefined)
+          .map((v) => [v.recipeId, v]),
+      ),
+    [recipeIds],
+  );
+  const preferences = useMemo(
+    () =>
+      effectivePreferences(
+        data.preferences,
+        conversation?.messages
+          .filter((m) => m.role === 'user')
+          .map((m) => m.text)
+          .join('\n') ?? '',
+      ),
+    [data.preferences, conversation],
   );
   const [prompt, setPrompt] = useState('');
   const [draft, setDraft] = useState<{
@@ -35,7 +95,10 @@ export function Home() {
   } | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    bottom.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+    bottom.current?.scrollIntoView({
+      block: 'end',
+      behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+    });
   }, [conversation?.messages.length, busy]);
   const requireModel = () => {
     if (!data.models.length) {
@@ -46,7 +109,7 @@ export function Home() {
     return true;
   };
   const submit = async () => {
-    if (!prompt.trim() || busy || !requireModel()) return;
+    if (!conversationReady || !prompt.trim() || busy || !requireModel()) return;
     const text = prompt.trim();
     const id = conversation?.id ?? uid();
     const assistantId = uid();
@@ -130,7 +193,7 @@ export function Home() {
     });
   };
   const select = async (candidate: Candidate) => {
-    if (busy) return;
+    if (!conversationReady || busy) return;
     const reused = await app.safe(() => reuseRecipe(candidate.name, preferences));
     if (reused) {
       app.notify('沿用已保存版本的用量与做法；可在问问 AI 中请求调整');
@@ -234,12 +297,8 @@ export function Home() {
                   {message.text}
                 </p>
                 {message.candidates?.map((candidate, index) => {
-                  const recipe = data.recipes.find(
-                    (r) => r.source === 'ai' && nameMatches(candidate.name, [r.name, ...r.aliases]),
-                  );
-                  const version = data.versions
-                    .filter((v) => v.recipeId === recipe?.id)
-                    .sort((a, b) => b.number - a.number)[0];
+                  const recipe = recipesByName.get(identity(candidate.name));
+                  const version = recipe ? latestVersions?.get(recipe.id) : undefined;
                   const conflict = version
                     ? restrictionConflict(version.content, preferences)
                     : candidate.blocked;
@@ -311,7 +370,7 @@ export function Home() {
               maxLength={1000}
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              disabled={!!busy}
+              disabled={!!busy || !conversationReady}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();
@@ -322,7 +381,7 @@ export function Home() {
             <button
               className="prompt-submit"
               aria-label="发送消息"
-              disabled={!!busy || !prompt.trim()}
+              disabled={!!busy || !conversationReady || !prompt.trim()}
             >
               {busy ? <LoaderCircle size={19} className="spin" /> : <ArrowRight size={21} />}
             </button>

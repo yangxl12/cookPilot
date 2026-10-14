@@ -16,7 +16,7 @@ import { testConnection } from '../../services/ai/client';
 import { DEEPSEEK_MODELS, DEEPSEEK_URL, isDeepSeek } from '../../services/ai/providers';
 import { uid, type ModelConfig } from '../../domain/schema';
 import { Sheet } from '../../shared/Sheet';
-import { PageHeader } from '../recipes/RecipePages';
+import { PageHeader } from '../../shared/PageHeader';
 
 export function PreferencesSheet({ onClose }: { onClose: () => void }) {
   const app = useApp();

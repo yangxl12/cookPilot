@@ -1,60 +1,186 @@
-import { useState } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { useDeferredValue, useMemo, useState } from 'react';
 import {
-  ArrowLeft,
   BookOpen,
   ChefHat,
   ChevronRight,
   Clock3,
+  LoaderCircle,
   RotateCcw,
   Search,
   Trash2,
 } from 'lucide-react';
 import { useApp } from '../../app/context';
-import { catalog } from '../../assets/recipes';
+import { useCatalog } from '../../shared/useCatalog';
+import { usePagedItems } from '../../shared/usePagedItems';
 import { cookAgain, deleteSession, openBuiltin } from '../../storage/repository';
 import { db } from '../../storage/db';
+import { PageHeader } from '../../shared/PageHeader';
 import { Sheet } from '../../shared/Sheet';
 
-export function PageHeader({ title, children }: { title: string; children?: React.ReactNode }) {
-  const { back } = useApp();
-  return (
-    <header className="root-header">
-      <button className="icon-button" aria-label="返回" onClick={back}>
-        <ArrowLeft size={21} />
-      </button>
-      <h1>{title}</h1>
-      <div>{children}</div>
-    </header>
-  );
-}
 export function RecipePages({ ai = false }: { ai?: boolean }) {
   const app = useApp();
   const { data } = app;
+  const catalog = useCatalog(!ai);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('全部');
   const [deleting, setDeleting] = useState<string | null>(null);
-  const tokens = search.toLowerCase().trim().split(/\s+/).filter(Boolean);
-  const builtins = catalog.filter(
-    (r) =>
-      (category === '全部' || r.content.cuisine === category) &&
-      tokens.every((t) =>
-        `${r.content.title} ${r.content.aliases.join(' ')} ${r.sourceText}`
-          .toLowerCase()
-          .includes(t),
-      ),
+  const deferredSearch = useDeferredValue(search);
+  const tokens = useMemo(
+    () => deferredSearch.toLowerCase().trim().split(/\s+/).filter(Boolean),
+    [deferredSearch],
   );
-  const sessions = data.sessions
-    .filter((s) => data.recipes.find((r) => r.id === s.recipeId)?.source === 'ai')
-    .filter((s) => {
-      const content = data.versions.find((v) => v.id === s.versionId)?.content;
-      return (
-        content &&
-        tokens.every((t) =>
-          `${content.title} ${content.aliases.join(' ')}`.toLowerCase().includes(t),
+  const recipeIds = useMemo(
+    () => new Set(data.recipes.filter((r) => r.source === 'ai').map((r) => r.id)),
+    [data.recipes],
+  );
+  const aiSessions = useMemo(
+    () =>
+      ai
+        ? data.sessions
+            .filter((s) => recipeIds.has(s.recipeId))
+            .sort((a, b) => b.createdAt - a.createdAt)
+        : [],
+    [ai, data.sessions, recipeIds],
+  );
+  const versionIds = useMemo(() => [...new Set(aiSessions.map((s) => s.versionId))], [aiSessions]);
+  const versions = useLiveQuery(
+    async () =>
+      new Map(
+        (await db.versions.bulkGet(versionIds))
+          .filter((v) => v !== undefined)
+          .map((v) => [v.id, v]),
+      ),
+    [versionIds],
+  );
+  const builtinIndex = useMemo(
+    () =>
+      ai
+        ? []
+        : (catalog ?? []).map((r) => ({
+            recipe: r,
+            text: `${r.content.title} ${r.content.aliases.join(' ')} ${r.sourceText}`.toLowerCase(),
+          })),
+    [ai, catalog],
+  );
+  const builtins = useMemo(
+    () =>
+      builtinIndex
+        .filter(
+          ({ recipe, text }) =>
+            (category === '全部' || recipe.content.cuisine === category) &&
+            tokens.every((t) => text.includes(t)),
         )
-      );
-    })
-    .sort((a, b) => b.createdAt - a.createdAt);
+        .map((item) => item.recipe),
+    [builtinIndex, category, tokens],
+  );
+  const sessions = useMemo(
+    () =>
+      aiSessions.filter((s) => {
+        const content = versions?.get(s.versionId)?.content;
+        return (
+          content &&
+          tokens.every((t) =>
+            `${content.title} ${content.aliases.join(' ')}`.toLowerCase().includes(t),
+          )
+        );
+      }),
+    [aiSessions, versions, tokens],
+  );
+  const builtinPage = usePagedItems(builtins, `${category}:${deferredSearch}`);
+  const savedPage = usePagedItems(sessions, deferredSearch);
+  const builtinRows = useMemo(
+    () =>
+      builtinPage.visible.map((recipe) => (
+        <button
+          className="catalog-row"
+          key={recipe.id}
+          onClick={() => {
+            void app.safe(async () => {
+              const session = await openBuiltin(recipe, data.preferences);
+              await app.navigate({ page: 'cook', sessionId: session.id });
+            });
+          }}
+        >
+          <span className="recipe-placeholder">
+            <BookOpen size={22} strokeWidth={1.4} />
+          </span>
+          <span className="row-copy">
+            <strong>{recipe.content.title}</strong>
+            <span>
+              {recipe.content.cuisine} · {recipe.content.minutes} 分钟 · {recipe.content.difficulty}
+            </span>
+          </span>
+          <ChevronRight size={17} />
+        </button>
+      )),
+    [builtinPage.visible, data.preferences, app.safe, app.navigate],
+  );
+  const savedRows = useMemo(
+    () =>
+      savedPage.visible.map((session) => {
+        const version = versions!.get(session.versionId)!;
+        return (
+          <article className="saved-recipe" key={session.id}>
+            <div className="saved-recipe-heading">
+              <span className="recipe-placeholder">
+                <ChefHat size={25} strokeWidth={1.4} />
+              </span>
+              <div className="row-copy">
+                <h2>{version.content.title}</h2>
+                <span>
+                  <Clock3 size={12} /> {version.content.minutes} 分钟 · v{version.number} ·{' '}
+                  {new Date(session.createdAt).toLocaleDateString('zh-CN')}
+                </span>
+              </div>
+            </div>
+            <p className="muted small">{version.content.conditions}</p>
+            {session.note && <p className="note-preview">{session.note}</p>}
+            <div className="row-actions">
+              <button
+                className="text-button"
+                onClick={() => {
+                  void app.safe(async () => {
+                    await db.sessions.update(session.id, { currentCard: 0 });
+                    await app.navigate({ page: 'cook', sessionId: session.id });
+                  });
+                }}
+              >
+                查看指南
+                <ChevronRight size={14} />
+              </button>
+              <button
+                className="text-button"
+                onClick={() => {
+                  void app.safe(async () => {
+                    const next = await cookAgain(session.id);
+                    await app.navigate({ page: 'cook', sessionId: next.id });
+                  });
+                }}
+              >
+                <RotateCcw size={14} />
+                再做一次
+              </button>
+              <button
+                className="icon-button muted"
+                aria-label={`删除${version.content.title}制作记录`}
+                onClick={() => setDeleting(session.id)}
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
+          </article>
+        );
+      }),
+    [savedPage.visible, versions, app.safe, app.navigate],
+  );
+  if (ai ? !versions : !catalog)
+    return (
+      <div className="boot" role="status">
+        <LoaderCircle className="spin" size={24} />
+        正在打开菜谱…
+      </div>
+    );
   return (
     <>
       <PageHeader title={ai ? 'AI 菜谱' : '菜谱大全'} />
@@ -82,89 +208,19 @@ export function RecipePages({ ai = false }: { ai?: boolean }) {
               ))}
             </div>
             <p className="list-count">{builtins.length} 道家常菜</p>
-            {builtins.map((recipe) => (
-              <button
-                className="catalog-row"
-                key={recipe.id}
-                onClick={() => {
-                  void app.safe(async () => {
-                    const session = await openBuiltin(recipe, data.preferences);
-                    await app.navigate({ page: 'cook', sessionId: session.id });
-                  });
-                }}
-              >
-                <span className="recipe-placeholder">
-                  <BookOpen size={22} strokeWidth={1.4} />
-                </span>
-                <span className="row-copy">
-                  <strong>{recipe.content.title}</strong>
-                  <span>
-                    {recipe.content.cuisine} · {recipe.content.minutes} 分钟 ·{' '}
-                    {recipe.content.difficulty}
-                  </span>
-                </span>
-                <ChevronRight size={17} />
-              </button>
-            ))}
+            {builtinRows}
+            {builtinPage.hasMore && (
+              <div className="list-sentinel" ref={builtinPage.sentinel} aria-hidden="true" />
+            )}
           </>
         )}
         {ai && (
           <>
             <p className="list-count">{sessions.length} 条制作记录</p>
-            {sessions.map((session) => {
-              const version = data.versions.find((v) => v.id === session.versionId)!;
-              return (
-                <article className="saved-recipe" key={session.id}>
-                  <div className="saved-recipe-heading">
-                    <span className="recipe-placeholder">
-                      <ChefHat size={25} strokeWidth={1.4} />
-                    </span>
-                    <div className="row-copy">
-                      <h2>{version.content.title}</h2>
-                      <span>
-                        <Clock3 size={12} /> {version.content.minutes} 分钟 · v{version.number} ·{' '}
-                        {new Date(session.createdAt).toLocaleDateString('zh-CN')}
-                      </span>
-                    </div>
-                  </div>
-                  <p className="muted small">{version.content.conditions}</p>
-                  {session.note && <p className="note-preview">{session.note}</p>}
-                  <div className="row-actions">
-                    <button
-                      className="text-button"
-                      onClick={() => {
-                        void app.safe(async () => {
-                          await db.sessions.update(session.id, { currentCard: 0 });
-                          await app.navigate({ page: 'cook', sessionId: session.id });
-                        });
-                      }}
-                    >
-                      查看指南
-                      <ChevronRight size={14} />
-                    </button>
-                    <button
-                      className="text-button"
-                      onClick={() => {
-                        void app.safe(async () => {
-                          const next = await cookAgain(session.id);
-                          await app.navigate({ page: 'cook', sessionId: next.id });
-                        });
-                      }}
-                    >
-                      <RotateCcw size={14} />
-                      再做一次
-                    </button>
-                    <button
-                      className="icon-button muted"
-                      aria-label={`删除${version.content.title}制作记录`}
-                      onClick={() => setDeleting(session.id)}
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                </article>
-              );
-            })}
+            {savedRows}
+            {savedPage.hasMore && (
+              <div className="list-sentinel" ref={savedPage.sentinel} aria-hidden="true" />
+            )}
           </>
         )}
         {(ai ? !sessions.length : !builtins.length) && (

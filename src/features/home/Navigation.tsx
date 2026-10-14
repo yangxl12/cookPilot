@@ -1,6 +1,7 @@
+import { useLiveQuery } from 'dexie-react-hooks';
 import { BookOpen, ChefHat, ChevronRight, History, Search, Settings2 } from 'lucide-react';
 import { useApp } from '../../app/context';
-import { setSetting } from '../../storage/db';
+import { db, setSetting } from '../../storage/db';
 import { historyGroup, isExpired } from '../../domain/rules';
 import { Sheet } from '../../shared/Sheet';
 
@@ -43,16 +44,17 @@ export function MenuSheet({ onClose }: { onClose: () => void }) {
 }
 export function HistorySheet({ onClose }: { onClose: () => void }) {
   const app = useApp();
-  const conversations = app.data.conversations
-    .filter((c) => !isExpired(c.lastSentAt))
-    .sort((a, b) => b.lastSentAt - a.lastSentAt);
+  const conversations =
+    useLiveQuery(() => db.conversations.orderBy('lastSentAt').reverse().toArray(), []) ?? [];
   return (
     <Sheet title="对话历史" onClose={onClose}>
       {!conversations.length && (
         <p className="empty-help">还没有对话。发送第一条消息后会保存在这里。</p>
       )}
       {['今天', '昨天', '近 7 天', '近 30 天'].map((group) => {
-        const items = conversations.filter((c) => historyGroup(c.lastSentAt) === group);
+        const items = conversations.filter(
+          (c) => !isExpired(c.lastSentAt) && historyGroup(c.lastSentAt) === group,
+        );
         return items.length ? (
           <section className="history-group" key={group}>
             <h3>{group}</h3>

@@ -1,19 +1,27 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { LoaderCircle, Timer as TimerIcon, X } from 'lucide-react';
-import { Context, type AppContext, type Data, type Route, type Work } from './context';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { LoaderCircle, X } from 'lucide-react';
+import { Context, type AppContext, type Route, type Work } from './context';
 import { db, setSetting } from '../storage/db';
 import { cancelTask, createTask, initialize, pageOwner, pruneHistory } from '../storage/repository';
-import { defaultPreferences, type Task } from '../domain/schema';
-import { formatTime, timerRemaining } from '../domain/rules';
+import type { Task } from '../domain/schema';
 import { Home } from '../features/home/Home';
 import { HistorySheet, MenuSheet } from '../features/home/Navigation';
-import { SearchPage } from '../features/search/SearchPage';
-import { RecipePages } from '../features/recipes/RecipePages';
-import { Cooking } from '../features/cooking/Cooking';
+import { useAppData } from './data';
+import { TimerClock } from '../features/cooking/TimerClock';
 import { Timers } from '../features/cooking/Timers';
 import { ModelSwitch, PreferencesSheet, Settings } from '../features/settings/Settings';
 import { migrateLegacy } from '../storage/migration';
+import { PageBoundary } from '../shared/PageBoundary';
+
+const SearchPage = lazy(() =>
+  import('../features/search/SearchPage').then((m) => ({ default: m.SearchPage })),
+);
+const RecipePages = lazy(() =>
+  import('../features/recipes/RecipePages').then((m) => ({ default: m.RecipePages })),
+);
+const Cooking = lazy(() =>
+  import('../features/cooking/Cooking').then((m) => ({ default: m.Cooking })),
+);
 
 function parseRoute(): Route {
   const [page, query] = location.hash.slice(1).split('?');
@@ -40,49 +48,9 @@ export function App() {
   const [sheet, setSheet] = useState<
     'menu' | 'history' | 'models' | 'preferences' | 'timers' | null
   >(null);
-  const [, tick] = useState(0);
   const active = useRef<{ controller: AbortController; taskId?: string } | null>(null);
   const toastTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const data = useLiveQuery(async (): Promise<Data> => {
-    const [recipes, versions, sessions, timers, conversations, cookingMessages, models, settings] =
-      await db.transaction(
-        'r',
-        [
-          db.recipes,
-          db.versions,
-          db.sessions,
-          db.timers,
-          db.conversations,
-          db.cookingMessages,
-          db.models,
-          db.settings,
-        ],
-        () =>
-          Promise.all([
-            db.recipes.toArray(),
-            db.versions.toArray(),
-            db.sessions.toArray(),
-            db.timers.toArray(),
-            db.conversations.toArray(),
-            db.cookingMessages.toArray(),
-            db.models.toArray(),
-            db.settings.toArray(),
-          ]),
-      );
-    const values = new Map(settings.map((s) => [s.id, s.value]));
-    return {
-      recipes,
-      versions,
-      sessions,
-      timers,
-      conversations,
-      cookingMessages,
-      models,
-      preferences: (values.get('preferences') as Data['preferences']) ?? defaultPreferences(),
-      activeModelId: (values.get('activeModelId') as string) ?? '',
-      activeConversationId: (values.get('activeConversationId') as string | null) ?? null,
-    };
-  }, []);
+  const data = useAppData();
   const notify = useCallback((text: string) => {
     setToast(text);
     clearTimeout(toastTimeout.current);
@@ -213,48 +181,32 @@ export function App() {
     const heartbeat = setInterval(() => {
       void setSetting(`lease:${pageOwner}`, Date.now()).catch(() => undefined);
     }, 15000);
-    const second = setInterval(() => tick((t) => t + 1), 1000);
     const onHide = () => {
-      active.current?.controller.abort();
-      if (active.current?.taskId) void cancelTask(active.current.taskId).catch(() => undefined);
+      void cancel().catch(() => undefined);
       void setSetting(`lease:${pageOwner}`, 0).catch(() => undefined);
     };
     window.addEventListener('pagehide', onHide);
     const onVisible = () => {
-      tick((t) => t + 1);
+      if (document.hidden) return;
+      void setSetting(`lease:${pageOwner}`, Date.now()).catch(() => undefined);
       void pruneHistory().catch(() => undefined);
     };
     document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('pageshow', onVisible);
     return () => {
       alive = false;
       clearInterval(interval);
       clearInterval(heartbeat);
-      clearInterval(second);
+      clearTimeout(toastTimeout.current);
+      void cancel().catch(() => undefined);
+      void db.settings.delete(`lease:${pageOwner}`).catch(() => undefined);
       window.removeEventListener('popstate', onRoute);
       window.removeEventListener('hashchange', onRoute);
       window.removeEventListener('pagehide', onHide);
       document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('pageshow', onVisible);
     };
   }, [cancel, notify]);
-  useEffect(() => {
-    if (!data || !ready) return;
-    for (const timer of data.timers)
-      if (timer.status === 'running' && timerRemaining(timer) === 0) {
-        void db
-          .transaction('rw', db.timers, async () => {
-            const fresh = await db.timers.get(timer.id);
-            if (fresh?.status !== 'running') return;
-            await db.timers.update(timer.id, {
-              status: 'done',
-              remaining: 0,
-              deadline: null,
-              notified: true,
-            });
-            notify(`${timer.name} 时间到，请观察食材状态`);
-          })
-          .catch(() => notify('计时状态保存失败，请重试'));
-      }
-  });
   useEffect(() => {
     if (!ready || !('serviceWorker' in navigator) || import.meta.env.DEV) return;
     // Waiting workers are deliberately not activated while the user is cooking.
@@ -282,7 +234,6 @@ export function App() {
         </div>
       </div>
     );
-  const running = data.timers.find((t) => t.status === 'running' && timerRemaining(t) > 0);
   const context: AppContext = {
     data,
     route,
@@ -303,23 +254,24 @@ export function App() {
     <Context.Provider value={context}>
       <div className="app">
         <div id="app-content">
-          {route.page === 'home' && <Home />}
-          {route.page === 'recipes' && <RecipePages />}
-          {route.page === 'ai-recipes' && <RecipePages ai />}
-          {route.page === 'settings' && <Settings />}
-          {route.page === 'search' && <SearchPage />}
-          {route.page === 'cook' && <Cooking key={route.sessionId} />}{' '}
-          {data.timers.length > 0 && route.page !== 'cook' && (
-            <button
-              className="timer-floating"
-              aria-label="打开所有计时器"
-              onClick={() => setSheet('timers')}
+          <PageBoundary key={route.page}>
+            <Suspense
+              fallback={
+                <div className="boot" role="status">
+                  <LoaderCircle className="spin" size={24} />
+                  正在打开…
+                </div>
+              }
             >
-              <TimerIcon size={16} />
-              {running ? formatTime(timerRemaining(running)) : '计时器'}
-              <span>{data.timers.length}</span>
-            </button>
-          )}
+              {route.page === 'home' && <Home />}
+              {route.page === 'recipes' && <RecipePages key="catalog" />}
+              {route.page === 'ai-recipes' && <RecipePages key="ai" ai />}
+              {route.page === 'settings' && <Settings />}
+              {route.page === 'search' && <SearchPage />}
+              {route.page === 'cook' && <Cooking key={route.sessionId} />}{' '}
+            </Suspense>
+          </PageBoundary>
+          <TimerClock />
         </div>
         {sheet === 'menu' && <MenuSheet onClose={() => setSheet(null)} />}{' '}
         {sheet === 'history' && <HistorySheet onClose={() => setSheet(null)} />}{' '}

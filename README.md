@@ -44,10 +44,13 @@ npm test                 # 业务、适配器和迁移；不消耗模型 Token
 npm run test:e2e          # 浏览器流程和手机尺寸；拦截模型请求
 npm run build            # TypeScript + 正式静态构建 + PWA
 npm run test:pwa          # 正式构建离线恢复；先执行 build
+npm run test:perf         # 先启动 dev；隔离浏览器内的大数据性能采样，不调用模型
 npm run check:secrets     # 检查源码与构建产物不包含本机 Key
 npm run format:check
 npm run preview          # http://localhost:4173
 ```
+
+性能检查范围、修复与采样结果见 [性能检查与修复](docs/性能检查与修复.md)。
 
 浏览器测试使用本机 Google Chrome。`dist/` 可部署到稳定的 HTTPS 来源，所有静态资源需要保留；Hash 路由不需要后端页面路由。默认部署到站点根路径，子目录部署时在构建前设置 `VITE_BASE_PATH`（含前后 `/`，例如 `/cookPilot/`）；页面资源与 PWA 都使用该路径。正式部署中不存在本地 Key 初始化接口，发布产物不包含开发配置。
 

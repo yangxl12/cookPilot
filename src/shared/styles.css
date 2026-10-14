@@ -469,7 +469,12 @@ svg {
   color: var(--muted);
   margin: 18px 0 5px;
 }
+.list-sentinel {
+  height: 1px;
+}
 .catalog-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 58px;
   display: flex;
   align-items: center;
   gap: 14px;
@@ -517,6 +522,8 @@ svg {
   line-height: 1.5;
 }
 .saved-recipe {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 140px;
   border-bottom: 1px solid var(--line);
   padding: 20px 0;
 }
@@ -628,6 +635,7 @@ svg {
   display: none;
 }
 .step-card {
+  content-visibility: auto;
   flex: 0 0 100%;
   min-width: 0;
   background: white;
@@ -1501,6 +1509,8 @@ svg {
   color: var(--muted);
 }
 .search-result {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 80px;
   display: block;
   text-align: left;
   width: 100%;

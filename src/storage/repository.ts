@@ -1,3 +1,4 @@
+import Dexie from 'dexie';
 import { db, setting, setSetting } from './db';
 import {
   isRetiredDeepSeek,
@@ -24,7 +25,6 @@ import {
   nameMatches,
   validateContent,
   applyPatch,
-  isExpired,
   restrictionConflict,
   timerRemaining,
 } from '../domain/rules';
@@ -56,8 +56,10 @@ export async function findExisting(
   // Only application-maintained known aliases identify a dish. Model-proposed aliases never merge entities.
   const recipe = recipes.find((r) => nameMatches(name, [r.name, ...r.aliases]));
   if (!recipe) return;
-  const versions = await db.versions.where('recipeId').equals(recipe.id).toArray();
-  const version = versions.sort((a, b) => b.number - a.number)[0];
+  const version = await db.versions
+    .where('[recipeId+number]')
+    .between([recipe.id, Dexie.minKey], [recipe.id, Dexie.maxKey])
+    .last();
   if (!version) return;
   const sessions = await db.sessions.where('versionId').equals(version.id).toArray();
   return { recipe, version, session: sessions.sort((a, b) => b.createdAt - a.createdAt)[0] };
@@ -320,10 +322,14 @@ export async function toggleTimer(id: string): Promise<void> {
 }
 export async function pruneHistory(time = Date.now()): Promise<void> {
   await db.transaction('rw', [db.conversations, db.settings], async () => {
-    const expired = (await db.conversations.toArray()).filter((c) => isExpired(c.lastSentAt, time));
-    await db.conversations.bulkDelete(expired.map((c) => c.id));
+    const expired = await db.conversations
+      .where('lastSentAt')
+      .below(time - 30 * 86400000)
+      .primaryKeys();
+    if (!expired.length) return;
+    await db.conversations.bulkDelete(expired);
     const active = await setting<string | null>('activeConversationId', null);
-    if (expired.some((c) => c.id === active)) await setSetting('activeConversationId', null);
+    if (active !== null && expired.includes(active)) await setSetting('activeConversationId', null);
   });
 }
 export async function saveModel(config: ModelConfig, key: string): Promise<void> {
@@ -436,13 +442,29 @@ export async function initialize(): Promise<void> {
   const activeTaskIds = new Set(
     (await db.tasks.where('status').equals('pending').toArray()).map((t) => t.id),
   );
-  await db.conversations.toCollection().modify((c) => {
-    for (const message of c.messages) {
-      if (message.status === 'pending' && (!message.taskId || !activeTaskIds.has(message.taskId))) {
-        message.status = 'interrupted';
-        message.text = '请求已中断，请重新发送。';
+  await db.conversations
+    .filter((c) =>
+      c.messages.some(
+        (message) =>
+          message.status === 'pending' && (!message.taskId || !activeTaskIds.has(message.taskId)),
+      ),
+    )
+    .modify((c) => {
+      for (const message of c.messages) {
+        if (
+          message.status === 'pending' &&
+          (!message.taskId || !activeTaskIds.has(message.taskId))
+        ) {
+          message.status = 'interrupted';
+          message.text = '请求已中断，请重新发送。';
+        }
       }
-    }
+    });
+  await db.transaction('rw', db.settings, async () => {
+    const expiredLeases = (await db.settings.where('id').startsWith('lease:').toArray())
+      .filter((lease) => typeof lease.value !== 'number' || lease.value < staleBefore)
+      .map((lease) => lease.id);
+    if (expiredLeases.length) await db.settings.bulkDelete(expiredLeases);
   });
   if (
     import.meta.env.DEV &&
@@ -451,7 +473,8 @@ export async function initialize(): Promise<void> {
     !(await setting('localBootstrapCompleted', false))
   ) {
     try {
-      const response = await fetch('/__local-model', {
+      const response = await fetch(`${import.meta.env.BASE_URL}__local-model`, {
+        signal: AbortSignal.timeout(2500),
         headers: { 'X-CookPilot-Local': '1' },
         cache: 'no-store',
       });

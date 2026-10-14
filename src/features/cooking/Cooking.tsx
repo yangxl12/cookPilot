@@ -1,3 +1,4 @@
+import { useLiveQuery } from 'dexie-react-hooks';
 import { useState } from 'react';
 import {
   ArrowLeft,
@@ -93,9 +94,11 @@ function Questions({
   const [selected, setSelected] = useState(
     session.execution.map((e) => `${e.targetType}:${e.targetId}`),
   );
-  const messages = app.data.cookingMessages
-    .filter((m) => m.sessionId === session.id)
-    .sort((a, b) => a.createdAt - b.createdAt);
+  const messages =
+    useLiveQuery(
+      () => db.cookingMessages.where('sessionId').equals(session.id).sortBy('createdAt'),
+      [session.id],
+    ) ?? [];
   const content = version.content;
   const submit = async (input = question) => {
     const text = input.trim();
@@ -350,8 +353,29 @@ export function Cooking() {
   const app = useApp();
   const { data } = app;
   const session = data.sessions.find((s) => s.id === app.route.sessionId);
-  const version = data.versions.find((v) => v.id === session?.versionId);
+  const versionSnapshot = useLiveQuery(
+    async () => ({
+      id: session?.versionId,
+      version: session ? await db.versions.get(session.versionId) : undefined,
+    }),
+    [session?.versionId],
+  );
+  const version = versionSnapshot?.id === session?.versionId ? versionSnapshot?.version : undefined;
   const [sheet, setSheet] = useState<'note' | 'questions' | 'steps' | 'versions' | null>(null);
+  const versions = useLiveQuery(
+    () =>
+      sheet === 'versions' && session
+        ? db.versions.where('recipeId').equals(session.recipeId).sortBy('number')
+        : [],
+    [sheet === 'versions', session?.recipeId],
+  );
+  if (session && versionSnapshot?.id !== session.versionId)
+    return (
+      <div className="boot" role="status">
+        <LoaderCircle className="spin" size={24} />
+        正在打开指南…
+      </div>
+    );
   if (!session || !version)
     return (
       <>
@@ -590,9 +614,9 @@ export function Cooking() {
       )}
       {sheet === 'versions' && (
         <Sheet title="版本历史" onClose={() => setSheet(null)}>
-          {data.versions
-            .filter((v) => v.recipeId === session.recipeId)
-            .sort((a, b) => b.number - a.number)
+          {(versions ?? [])
+            .slice()
+            .reverse()
             .map((v) => (
               <details className="version-history" key={v.id}>
                 <summary>

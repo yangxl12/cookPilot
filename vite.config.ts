@@ -52,6 +52,8 @@ export default defineConfig({
     },
     VitePWA({
       registerType: 'prompt',
+      // App owns registration after initialization; avoid a second injected registration.
+      injectRegister: false,
       includeAssets: ['fonts/*', 'favicon.svg', 'icon-192.png', 'icon-512.png'],
       manifest: {
         name: 'CookPilot 烹饪助手',
