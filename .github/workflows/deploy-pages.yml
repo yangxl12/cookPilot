@@ -20,6 +20,14 @@ jobs:
       pages: read
     steps:
       - uses: actions/checkout@v4
+      - name: Require GitHub Actions as the Pages source
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pages } = await github.rest.repos.getPages(context.repo);
+            if (pages.build_type !== 'workflow') {
+              core.setFailed('请在 Settings → Pages → Source 选择 GitHub Actions。分支发布会将源码 index.html 上线，导致 /src/main.tsx 404 和白屏。');
+            }
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -40,6 +48,8 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
     permissions:
       pages: write
       id-token: write
@@ -50,3 +60,19 @@ jobs:
       - name: Deploy to Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+  verify:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Verify the published app in a browser
+        run: npm run test:pwa -- tests/pwa/deployment.spec.ts
+        env:
+          PWA_BASE_URL: ${{ needs.deploy.outputs.page_url }}

@@ -55,6 +55,8 @@ npm run preview          # http://localhost:4173
 
 在仓库 **Settings → Pages → Build and deployment → Source** 选择 **GitHub Actions**。推送到 `main` 后，`.github/workflows/deploy-pages.yml` 自动安装依赖、按 Pages 路径构建，只上传并部署 `dist/`。也可以在 Actions 中手动运行 **Deploy to GitHub Pages**。
 
+工作流会先检查发布来源；仍为分支发布时直接报错，防止两套发布流程互相覆盖。部署后还会用浏览器访问线上地址，确认首页渲染、JS/CSS/字体加载和 PWA 路径正确，才算整个工作流成功。如果看到 `/src/main.tsx` 404，先检查 Source 是否被改回了 **Deploy from a branch**；修正后重新运行上述工作流。
+
 本站地址为 https://yangxl12.github.io/cookPilot/ 。不要将仓库根目录作为静态站点直接发布：根目录 `index.html` 的 `/src/main.tsx` 是 Vite 开发入口，需要构建后才会替换成浏览器可运行的 JavaScript。
 
 本地复现 Pages 子路径（PowerShell）：

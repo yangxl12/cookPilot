@@ -13,7 +13,8 @@ test('正式部署入口、静态资源和 PWA 使用相同的部署目录', asy
     if (response.status() >= 400) errors.push(`${response.status()} ${url.pathname}`);
   });
 
-  const response = await page.goto('./');
+  // A fresh URL avoids checking a cached homepage after a Pages deployment.
+  const response = await page.goto(`./?deployment=${process.env.GITHUB_SHA || Date.now()}`);
   expect(response?.ok()).toBe(true);
   expect(await response!.text()).not.toContain('/src/main.tsx');
   await expect(page.getByRole('heading', { name: '想做什么菜？' })).toBeVisible();
