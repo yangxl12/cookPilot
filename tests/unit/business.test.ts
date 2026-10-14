@@ -293,6 +293,14 @@ describe('模型内容与本地资料', () => {
     const content = { ...contentExample, cookware: ['炒锅', '烤箱'] };
     expect(() => validateContent(content, { ...prefs, cookware: ['炒锅'] })).toThrow('锅具');
   });
+  it('碗刀砧板不受锅具多选限制，仍检查所有加热设备', () => {
+    const preferences = { ...prefs, cookware: ['炒锅'] };
+    const content = { ...contentExample, cookware: ['碗', '菜刀', '砧板'] };
+    expect(validateContent(content, preferences)).toEqual(content);
+    expect(() => validateContent({ ...content, cookware: ['碗', '烤箱'] }, preferences)).toThrow(
+      '锅具',
+    );
+  });
   it('保护已经执行的内容和已用材料', () => {
     const session = newSession('r', 'v');
     session.execution = [{ targetType: 'prep', targetId: 'cut', confirmedAt: Date.now() }];

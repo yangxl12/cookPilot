@@ -96,8 +96,16 @@ export function validateContent(input: unknown, preferences?: Preferences, stric
   }
   if (strict)
     for (const ingredient of content.ingredients) {
-      if (Math.abs((consumed.get(ingredient.id) ?? 0) - 1) > 0.001)
-        problems.push(`${ingredient.name} 用量分配之和不等于 1`);
+      if (Math.abs((consumed.get(ingredient.id) ?? 0) - 1) > 0.001) {
+        const allocations = [...content.prep, ...content.steps].flatMap((action) =>
+          action.uses
+            .filter((use) => use.ingredientId === ingredient.id && use.fraction > 0)
+            .map((use) => `${action.id}=${use.fraction}`),
+        );
+        problems.push(
+          `${ingredient.name} 用量分配之和不等于 1（当前 ${consumed.get(ingredient.id) ?? 0}；${allocations.join('，') || '未分配'}）`,
+        );
+      }
       if (ingredient.quantity === null && !ingredient.amountText)
         problems.push(`${ingredient.name} 缺少定性用量说明`);
     }
@@ -115,6 +123,7 @@ export function validateContent(input: unknown, preferences?: Preferences, stric
       !content.cookware.every(
         (tool) =>
           /无需加热|无需锅具/.test(tool) ||
+          /^(?:[大小]?碗|拌菜碗|盘子?|[菜厨]刀|砧板|案板|筷子|勺子|滤网|漏勺)$/.test(tool) ||
           preferences.cookware.some(
             (available) => tool.includes(available) || available.includes(tool),
           ),

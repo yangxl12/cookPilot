@@ -1,0 +1,166 @@
+{
+  "schemaVersion": 1,
+  "title": "凉拌黄瓜",
+  "aliases": ["拍黄瓜", "蒜泥黄瓜"],
+  "cuisine": "中式",
+  "minutes": 15,
+  "difficulty": "简单",
+  "conditions": "常规一盘，黄瓜2根约400g，现拌现吃",
+  "cookware": ["碗"],
+  "keyPoints": [
+    "黄瓜拍裂比刀切更入味。",
+    "先用盐脱水再倒掉水分，避免出汤稀释味道。",
+    "蒜末和香醋最后拌匀，现拌现吃口感最脆。"
+  ],
+  "ingredients": [
+    {
+      "id": "cucumber",
+      "name": "黄瓜",
+      "quantity": 400,
+      "unit": "g",
+      "amountText": "",
+      "group": "主料",
+      "note": "约2根"
+    },
+    {
+      "id": "garlic",
+      "name": "大蒜",
+      "quantity": 3,
+      "unit": "瓣",
+      "amountText": "",
+      "group": "调味",
+      "note": "拍碎切末"
+    },
+    {
+      "id": "vinegar",
+      "name": "香醋",
+      "quantity": 15,
+      "unit": "ml",
+      "amountText": "",
+      "group": "调味",
+      "note": ""
+    },
+    {
+      "id": "soy_sauce",
+      "name": "生抽",
+      "quantity": 10,
+      "unit": "ml",
+      "amountText": "",
+      "group": "调味",
+      "note": ""
+    },
+    {
+      "id": "sesame_oil",
+      "name": "香油",
+      "quantity": 5,
+      "unit": "ml",
+      "amountText": "",
+      "group": "调味",
+      "note": ""
+    },
+    {
+      "id": "salt",
+      "name": "盐",
+      "quantity": 3,
+      "unit": "g",
+      "amountText": "",
+      "group": "调味",
+      "note": "其中2g用于脱水"
+    },
+    {
+      "id": "sugar",
+      "name": "白糖",
+      "quantity": 2,
+      "unit": "g",
+      "amountText": "",
+      "group": "调味",
+      "note": ""
+    }
+  ],
+  "prep": [
+    {
+      "id": "prep_cucumber",
+      "title": "处理黄瓜并脱水",
+      "action": "{{cucumber}} 洗净，用刀面拍裂后切成约3cm的段；撒入 {{salt}} 抓匀，静置10分钟，倒掉渗出的水分。",
+      "uses": [
+        {
+          "ingredientId": "cucumber",
+          "fraction": 1
+        },
+        {
+          "ingredientId": "salt",
+          "fraction": 1
+        }
+      ],
+      "seconds": 600,
+      "parallel": "静置期间可同步准备蒜末和料汁。"
+    },
+    {
+      "id": "prep_sauce",
+      "title": "调凉拌料汁",
+      "action": "{{garlic}} 拍碎切末，放入小碗，加入 {{vinegar}}、{{soy_sauce}}、{{sesame_oil}} 和 {{sugar}}，搅拌至糖溶化。",
+      "uses": [
+        {
+          "ingredientId": "garlic",
+          "fraction": 1
+        },
+        {
+          "ingredientId": "vinegar",
+          "fraction": 1
+        },
+        {
+          "ingredientId": "soy_sauce",
+          "fraction": 1
+        },
+        {
+          "ingredientId": "sesame_oil",
+          "fraction": 1
+        },
+        {
+          "ingredientId": "sugar",
+          "fraction": 1
+        }
+      ],
+      "seconds": 120,
+      "parallel": ""
+    }
+  ],
+  "steps": [
+    {
+      "id": "mix",
+      "title": "拌匀装盘",
+      "action": "将调好的料汁倒入黄瓜中，翻拌均匀即可装盘。",
+      "uses": [
+        {
+          "ingredientId": "cucumber",
+          "fraction": 0
+        },
+        {
+          "ingredientId": "garlic",
+          "fraction": 0
+        },
+        {
+          "ingredientId": "vinegar",
+          "fraction": 0
+        },
+        {
+          "ingredientId": "soy_sauce",
+          "fraction": 0
+        },
+        {
+          "ingredientId": "sesame_oil",
+          "fraction": 0
+        },
+        {
+          "ingredientId": "sugar",
+          "fraction": 0
+        }
+      ],
+      "heat": "",
+      "seconds": 60,
+      "signal": "黄瓜均匀裹上料汁，蒜香明显，口感清脆。",
+      "tip": "拌好后尽快食用，久放会出水变软。",
+      "dependsOn": ["prep_cucumber", "prep_sauce"]
+    }
+  ]
+}

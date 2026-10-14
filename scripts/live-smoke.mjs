@@ -2,7 +2,7 @@ import { chromium } from '@playwright/test';
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 
 // Explicit opt-in command. At most one connection, recommendation, generation
-// (plus its one schema repair), question and adjustment. Never part of npm test.
+// (plus up to two content repairs), question and adjustment. Never part of npm test.
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 const context = await browser.newContext({
   viewport: { width: 390, height: 844 },

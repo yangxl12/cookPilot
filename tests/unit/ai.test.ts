@@ -5,6 +5,8 @@ import { defaultPreferences, difficultySchema } from '../../src/domain/schema';
 import { renderAction, validateContent, validateRequestedAmounts } from '../../src/domain/rules';
 import realContent from '../fixtures/deepseek-flash-guide.json';
 import realRecommendation from '../fixtures/deepseek-flash-recommendation.json';
+import braisedPork from '../fixtures/deepseek-braised-pork.json';
+import cucumber from '../fixtures/deepseek-cucumber.json';
 
 const model = {
   id: 'test',
@@ -107,7 +109,7 @@ it('空响应与截断内容不伪装成功', async () => {
   await expect(chat(model, [], { json: true })).rejects.toThrow('截断');
   expect(() => parseJson('{bad')).toThrow('无法解析');
 });
-it('最多一次内容修复，仍无效则失败', async () => {
+it('最多两次内容修复，仍无效则失败且不暴露原始 schema 异常', async () => {
   const fetcher = vi.fn().mockImplementation(async () => result('{}'));
   vi.stubGlobal('fetch', fetcher);
   await expect(
@@ -125,8 +127,8 @@ it('最多一次内容修复，仍无效则失败', async () => {
       defaultPreferences(),
       new AbortController().signal,
     ),
-  ).rejects.toThrow('校验未通过');
-  expect(fetcher).toHaveBeenCalledTimes(2);
+  ).rejects.toThrow(/菜谱内容校验未通过，未保存：schemaVersion 只能为 1/);
+  expect(fetcher).toHaveBeenCalledTimes(3);
   const request = JSON.parse(fetcher.mock.calls[0][1].body);
   expect(request.thinking.type).toBe('disabled');
   expect(request.max_tokens).toBe(6500);
@@ -242,6 +244,7 @@ it.each(['total', 'unknown', 'reference', 'hardcoded', 'restriction'])(
         break;
       case 'reference':
         guide.steps[1].action += '{{egg}}';
+        guide.steps[0].uses[1].fraction = 0;
         expected = '文字引用缺少用量表';
         break;
       case 'hardcoded':
@@ -257,11 +260,166 @@ it.each(['total', 'unknown', 'reference', 'hardcoded', 'restriction'])(
     await expect(
       generate(model, candidate, '', preferences, new AbortController().signal),
     ).rejects.toThrow(expected);
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(3);
   },
 );
 it('真实 deepseek-flash 返回样本通过当前严格规则，回归测试不再调用模型', () => {
   const content = validateContent(realContent, { ...defaultPreferences(), avoidances: '辣椒' });
   expect(validateRequestedAmounts(content, '番茄400g、鸡蛋3个')).toEqual(content);
   expect(content.steps.length).toBeGreaterThan(0);
+});
+
+it('真实凉拌黄瓜响应的备菜依赖在本地消解，一次请求即可通过严格校验', async () => {
+  expect(() => validateContent(cucumber)).toThrow('依赖不存在或顺序错误');
+  const fetcher = vi.fn().mockResolvedValue(result(JSON.stringify(cucumber)));
+  vi.stubGlobal('fetch', fetcher);
+  const content = await generate(
+    model,
+    { ...candidate, name: '凉拌黄瓜' },
+    '',
+    defaultPreferences(),
+    new AbortController().signal,
+  );
+  expect(content.steps[0].dependsOn).toEqual([]);
+  expect(content.ingredients).toEqual(cucumber.ingredients);
+  expect(content.prep).toEqual(cucumber.prep);
+  expect(validateContent(content)).toEqual(content);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+
+it('已分配食材再次引用补零比例记录，不重复分配，兼容占位符内的空格', async () => {
+  const guide = structuredClone(contentExample);
+  guide.steps[1].action += '倒回 {{ egg }}。';
+  guide.steps[0].dependsOn = ['cut'];
+  const fetcher = vi.fn().mockResolvedValue(result(JSON.stringify(guide)));
+  vi.stubGlobal('fetch', fetcher);
+  const content = await generate(
+    model,
+    candidate,
+    '',
+    defaultPreferences(),
+    new AbortController().signal,
+  );
+  expect(content.steps[0].dependsOn).toEqual([]);
+  expect(content.steps[1].uses.at(-1)).toEqual({ ingredientId: 'egg', fraction: 0 });
+  expect(renderAction(content, content.steps[1])).toContain('倒回 鸡蛋。');
+  expect(content.ingredients).toEqual(guide.ingredients);
+  expect(validateContent(content)).toEqual(content);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+
+it.each(['unknown', 'forward', 'self', 'ambiguous'])(
+  '消解备菜依赖仍拒绝错误烹饪依赖：%s',
+  async (problem) => {
+    const guide = structuredClone(contentExample);
+    const dependency =
+      problem === 'unknown' ? 'missing' : problem === 'forward' ? 'finish' : 'eggs';
+    if (problem === 'ambiguous') guide.prep[0].id = 'eggs';
+    guide.steps[0].dependsOn = [dependency];
+    const fetcher = vi.fn().mockImplementation(async () => result(JSON.stringify(guide)));
+    vi.stubGlobal('fetch', fetcher);
+    await expect(
+      generate(model, candidate, '', defaultPreferences(), new AbortController().signal),
+    ).rejects.toThrow('依赖不存在或顺序错误');
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  },
+);
+
+it('真实红烧肉的重复分配反馈具体数值和位置，连续修复后才返回', async () => {
+  const schemaFixed = structuredClone(braisedPork);
+  schemaFixed.ingredients[12].group = '调味';
+  expect(() => validateContent(schemaFixed)).toThrow('姜 用量分配之和不等于 1（当前 2');
+  const repaired = structuredClone(schemaFixed);
+  for (const usage of repaired.prep[1].uses) usage.fraction = 0;
+  repaired.steps[2].uses[0].fraction = 0.5;
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(result(JSON.stringify(braisedPork)))
+    .mockResolvedValueOnce(result(JSON.stringify(schemaFixed)))
+    .mockResolvedValueOnce(result(JSON.stringify(repaired)));
+  vi.stubGlobal('fetch', fetcher);
+  const content = await generate(
+    model,
+    { ...candidate, name: '红烧肉' },
+    '',
+    defaultPreferences(),
+    new AbortController().signal,
+  );
+  expect(content.title).toBe('红烧肉');
+  expect(content.ingredients).toEqual(schemaFixed.ingredients);
+  expect(validateContent(content)).toEqual(content);
+  expect(fetcher).toHaveBeenCalledTimes(3);
+  expect(JSON.parse(fetcher.mock.calls[1][1].body).messages.at(-1).content).toContain(
+    '只能为 主料 / 调味',
+  );
+  expect(JSON.parse(fetcher.mock.calls[2][1].body).messages.at(-1).content).toContain(
+    'aromatics=0.5',
+  );
+});
+
+it('菜名与所选菜品不符时先自动修复，不能带着错误菜名进入保存', async () => {
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(result(JSON.stringify({ ...contentExample, title: '鸡蛋汤' })))
+    .mockResolvedValueOnce(result(JSON.stringify(contentExample)));
+  vi.stubGlobal('fetch', fetcher);
+  const content = await generate(
+    model,
+    candidate,
+    '',
+    defaultPreferences(),
+    new AbortController().signal,
+  );
+  expect(content.title).toBe(candidate.name);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(JSON.parse(fetcher.mock.calls[1][1].body).messages.at(-1).content).toContain(
+    '菜名必须为所选的“西红柿炒鸡蛋”',
+  );
+});
+
+it('同时反馈分配、用户用量和菜名错误，一次修复即可解决多个问题', async () => {
+  const wrong = structuredClone(contentExample);
+  wrong.title = '鸡蛋汤';
+  wrong.ingredients[0].quantity = 200;
+  wrong.steps[1].uses[0].fraction = 1;
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(result(JSON.stringify(wrong)))
+    .mockResolvedValueOnce(result(JSON.stringify(contentExample)));
+  vi.stubGlobal('fetch', fetcher);
+  const content = await generate(
+    model,
+    candidate,
+    '番茄400g',
+    defaultPreferences(),
+    new AbortController().signal,
+  );
+  expect(content).toEqual(contentExample);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  const feedback = JSON.parse(fetcher.mock.calls[1][1].body).messages.at(-1).content;
+  expect(feedback).toContain('用量分配之和不等于 1');
+  expect(feedback).toContain('未遵守本次明确用量');
+  expect(feedback).toContain('菜名必须为所选的');
+});
+
+it('取消生成时不继续内容修复或返回已取消的结果', async () => {
+  const controller = new AbortController();
+  const fetcher = vi.fn().mockImplementation(async () => {
+    controller.abort();
+    return result(JSON.stringify(contentExample));
+  });
+  vi.stubGlobal('fetch', fetcher);
+  await expect(
+    generate(model, candidate, '', defaultPreferences(), controller.signal),
+  ).rejects.toMatchObject({ name: 'AbortError' });
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+
+it('生成请求的认证错误直接返回，不进入内容修复', async () => {
+  const fetcher = vi.fn().mockImplementation(async () => new Response('{}', { status: 401 }));
+  vi.stubGlobal('fetch', fetcher);
+  await expect(
+    generate(model, candidate, '', defaultPreferences(), new AbortController().signal),
+  ).rejects.toThrow('API Key 无效');
+  expect(fetcher).toHaveBeenCalledTimes(1);
 });

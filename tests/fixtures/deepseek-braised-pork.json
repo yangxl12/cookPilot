@@ -1,0 +1,296 @@
+{
+  "schemaVersion": 1,
+  "title": "红烧肉",
+  "aliases": ["家常红烧肉"],
+  "cuisine": "中式",
+  "minutes": 90,
+  "difficulty": "适中",
+  "conditions": "常规一盘，五花肉500g，冰糖20g。",
+  "cookware": ["炒锅"],
+  "keyPoints": [
+    "五花肉冷水下锅焯水，去腥定型后再切块，形状更整齐。",
+    "炒糖色用小火，冰糖融化变枣红色立即下肉，避免焦苦。",
+    "最后大火收汁，让汤汁浓稠裹肉。"
+  ],
+  "ingredients": [
+    {
+      "id": "pork_belly",
+      "name": "五花肉",
+      "quantity": 500,
+      "unit": "g",
+      "amountText": "",
+      "group": "主料",
+      "note": ""
+    },
+    {
+      "id": "rock_sugar",
+      "name": "冰糖",
+      "quantity": 20,
+      "unit": "g",
+      "amountText": "",
+      "group": "调味",
+      "note": ""
+    },
+    {
+      "id": "ginger",
+      "name": "姜",
+      "quantity": 15,
+      "unit": "g",
+      "amountText": "",
+      "group": "调味",
+      "note": ""
+    },
+    {
+      "id": "scallion",
+      "name": "大葱",
+      "quantity": 20,
+      "unit": "g",
+      "amountText": "",
+      "group": "调味",
+      "note": ""
+    },
+    {
+      "id": "star_anise",
+      "name": "八角",
+      "quantity": 2,
+      "unit": "个",
+      "amountText": "",
+      "group": "调味",
+      "note": ""
+    },
+    {
+      "id": "cinnamon",
+      "name": "桂皮",
+      "quantity": 1,
+      "unit": "段",
+      "amountText": "",
+      "group": "调味",
+      "note": ""
+    },
+    {
+      "id": "bay_leaf",
+      "name": "香叶",
+      "quantity": 2,
+      "unit": "片",
+      "amountText": "",
+      "group": "调味",
+      "note": ""
+    },
+    {
+      "id": "cooking_wine",
+      "name": "料酒",
+      "quantity": 20,
+      "unit": "ml",
+      "amountText": "",
+      "group": "调味",
+      "note": ""
+    },
+    {
+      "id": "light_soy",
+      "name": "生抽",
+      "quantity": 25,
+      "unit": "ml",
+      "amountText": "",
+      "group": "调味",
+      "note": ""
+    },
+    {
+      "id": "dark_soy",
+      "name": "老抽",
+      "quantity": 10,
+      "unit": "ml",
+      "amountText": "",
+      "group": "调味",
+      "note": ""
+    },
+    {
+      "id": "salt",
+      "name": "盐",
+      "quantity": 2,
+      "unit": "g",
+      "amountText": "",
+      "group": "调味",
+      "note": ""
+    },
+    {
+      "id": "oil",
+      "name": "食用油",
+      "quantity": 10,
+      "unit": "ml",
+      "amountText": "",
+      "group": "调味",
+      "note": ""
+    },
+    {
+      "id": "water",
+      "name": "热水",
+      "quantity": 800,
+      "unit": "ml",
+      "amountText": "",
+      "group": "其他",
+      "note": "用于炖煮"
+    }
+  ],
+  "prep": [
+    {
+      "id": "blanch_pork",
+      "title": "焯水切块",
+      "action": "五花肉整块冷水下锅，加入 {{cooking_wine}} 和一半 {{ginger}}，大火煮开撇去浮沫，煮5分钟后捞出放凉，切成3厘米见方的块。",
+      "uses": [
+        {
+          "ingredientId": "cooking_wine",
+          "fraction": 1
+        },
+        {
+          "ingredientId": "ginger",
+          "fraction": 0.5
+        },
+        {
+          "ingredientId": "pork_belly",
+          "fraction": 0
+        }
+      ],
+      "seconds": 420,
+      "parallel": "另烧一壶热水备用。"
+    },
+    {
+      "id": "aromatics",
+      "title": "准备香料",
+      "action": "剩余 {{ginger}} 切片，{{scallion}} 切段；{{star_anise}}、{{cinnamon}}、{{bay_leaf}} 冲洗干净备用。",
+      "uses": [
+        {
+          "ingredientId": "ginger",
+          "fraction": 0.5
+        },
+        {
+          "ingredientId": "scallion",
+          "fraction": 1
+        },
+        {
+          "ingredientId": "star_anise",
+          "fraction": 1
+        },
+        {
+          "ingredientId": "cinnamon",
+          "fraction": 1
+        },
+        {
+          "ingredientId": "bay_leaf",
+          "fraction": 1
+        }
+      ],
+      "seconds": 0,
+      "parallel": ""
+    }
+  ],
+  "steps": [
+    {
+      "id": "fry_sugar",
+      "title": "炒糖色",
+      "action": "炒锅中小火，加入 {{oil}} 和 {{rock_sugar}}，不断搅拌至冰糖融化并变成枣红色小泡。",
+      "uses": [
+        {
+          "ingredientId": "oil",
+          "fraction": 1
+        },
+        {
+          "ingredientId": "rock_sugar",
+          "fraction": 1
+        }
+      ],
+      "heat": "小火",
+      "seconds": 120,
+      "signal": "冰糖完全融化，颜色呈枣红色，冒细密小泡，有焦糖香气但无苦味。",
+      "tip": "糖色一旦变深起大烟要立即下肉，否则会发苦。",
+      "dependsOn": []
+    },
+    {
+      "id": "coat_pork",
+      "title": "裹糖色",
+      "action": "立即倒入焯好切块的 {{pork_belly}}，转中火快速翻炒，使每块肉均匀裹上糖色。",
+      "uses": [
+        {
+          "ingredientId": "pork_belly",
+          "fraction": 1
+        }
+      ],
+      "heat": "中火",
+      "seconds": 180,
+      "signal": "肉块表面均匀上色，边缘微焦，析出部分油脂。",
+      "tip": "",
+      "dependsOn": ["fry_sugar"]
+    },
+    {
+      "id": "season",
+      "title": "加料调味",
+      "action": "加入 {{ginger}}、{{scallion}}、{{star_anise}}、{{cinnamon}}、{{bay_leaf}} 炒香，沿锅边淋入 {{light_soy}} 和 {{dark_soy}} 翻匀。",
+      "uses": [
+        {
+          "ingredientId": "ginger",
+          "fraction": 1
+        },
+        {
+          "ingredientId": "scallion",
+          "fraction": 1
+        },
+        {
+          "ingredientId": "star_anise",
+          "fraction": 1
+        },
+        {
+          "ingredientId": "cinnamon",
+          "fraction": 1
+        },
+        {
+          "ingredientId": "bay_leaf",
+          "fraction": 1
+        },
+        {
+          "ingredientId": "light_soy",
+          "fraction": 1
+        },
+        {
+          "ingredientId": "dark_soy",
+          "fraction": 1
+        }
+      ],
+      "heat": "中火",
+      "seconds": 60,
+      "signal": "香料香味明显，酱油均匀附着在肉块上。",
+      "tip": "",
+      "dependsOn": ["coat_pork"]
+    },
+    {
+      "id": "braise",
+      "title": "加水炖煮",
+      "action": "倒入 {{water}}，大火烧开后转小火，盖上锅盖炖45分钟。",
+      "uses": [
+        {
+          "ingredientId": "water",
+          "fraction": 1
+        }
+      ],
+      "heat": "小火",
+      "seconds": 2700,
+      "signal": "肉块能用筷子轻松插入，肥肉部分透明软糯，汤汁减少约三分之一。",
+      "tip": "中途翻动一两次，防止粘底。",
+      "dependsOn": ["season"]
+    },
+    {
+      "id": "reduce",
+      "title": "收汁",
+      "action": "开盖转大火，加入 {{salt}}，不断翻动收汁，待汤汁浓稠裹住肉块即可关火。",
+      "uses": [
+        {
+          "ingredientId": "salt",
+          "fraction": 1
+        }
+      ],
+      "heat": "大火",
+      "seconds": 300,
+      "signal": "汤汁浓稠如糖浆，均匀包裹每块肉，锅底只剩少量油脂和浓汁。",
+      "tip": "收汁后期勤翻动，防止糊锅。",
+      "dependsOn": ["braise"]
+    }
+  ]
+}

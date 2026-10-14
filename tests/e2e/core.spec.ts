@@ -86,6 +86,79 @@ test('步骤漏写油的引用仍可生成、保存，刷新后保留正确的�
   await expect(page.getByText(/\{\{oil\}\}/)).toHaveCount(0);
   expect(generations).toBe(1);
 });
+
+test('备菜依赖和重复提及的食材在本地修复，保存刷新后仍可阅读', async ({ page }) => {
+  const guide = structuredClone(contentExample);
+  guide.steps[0].dependsOn = ['cut'];
+  guide.steps[1].action += '倒回 {{ egg }}。';
+  let generations = 0;
+  await page.route('https://api.deepseek.com/**', async (route) => {
+    if (!route.request().postDataJSON().messages?.[0]?.content.includes('完整指南按此'))
+      return route.fallback();
+    generations++;
+    await route.fulfill({
+      json: { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(guide) } }] },
+    });
+  });
+  await generate(page);
+  await page.getByRole('button', { name: '跳转第 2 步', exact: true }).click();
+  await expect(page.getByText('倒回 鸡蛋。', { exact: false })).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('倒回 鸡蛋。', { exact: false })).toBeVisible();
+  await expect(page.getByText(/\{\{\s*egg\s*\}\}/)).toHaveCount(0);
+  expect(generations).toBe(1);
+});
+
+test('字段和用量错误连续修复后自动保存，复用时不再生成', async ({ page }) => {
+  const wrongSchema = { ...contentExample, cuisine: '未知' };
+  const wrongAmounts = structuredClone(contentExample);
+  wrongAmounts.steps[1].uses[0].fraction = 1;
+  const responses = [wrongSchema, wrongAmounts, contentExample];
+  let generations = 0;
+  await page.route('https://api.deepseek.com/**', async (route) => {
+    if (!route.request().postDataJSON().messages?.[0]?.content.includes('完整指南按此'))
+      return route.fallback();
+    const response = responses[generations++];
+    await route.fulfill({
+      json: {
+        choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(response) } }],
+      },
+    });
+  });
+  await generate(page);
+  expect(generations).toBe(3);
+  await page.reload();
+  await expect(page.getByRole('heading', { name: '准备好，再开火' })).toBeVisible();
+  await page.getByRole('button', { name: '返回', exact: true }).click();
+  await page.getByRole('button', { name: '使用已有菜谱' }).click();
+  await expect(page.getByRole('heading', { name: '准备好，再开火' })).toBeVisible();
+  expect(generations).toBe(3);
+});
+
+test('修复后仍有用量冲突时保留候选，禁止保存无效菜谱', async ({ page }) => {
+  const guide = structuredClone(contentExample);
+  guide.steps[1].uses[0].fraction = 1;
+  let generations = 0;
+  await page.route('https://api.deepseek.com/**', async (route) => {
+    if (!route.request().postDataJSON().messages?.[0]?.content.includes('完整指南按此'))
+      return route.fallback();
+    generations++;
+    await route.fulfill({
+      json: { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(guide) } }] },
+    });
+  });
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: 'DeepSeek Flash' })).toBeVisible();
+  await page.getByRole('textbox', { name: '描述做菜需求' }).fill('番茄炒蛋');
+  await page.getByRole('button', { name: '发送消息' }).click();
+  await page.getByRole('button', { name: '生成菜谱' }).click();
+  await expect(page.getByText('菜谱内容校验未通过，未保存', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: '生成菜谱' })).toBeEnabled();
+  await expect(page.getByText('指南已生成，但尚未保存。')).toHaveCount(0);
+  expect(generations).toBe(3);
+  await page.goto('/#ai-recipes');
+  await expect(page.getByText('还没有 AI 菜谱')).toBeVisible();
+});
 test('空白初态；推荐、生成、刷新、心得、再次制作', async ({ page }) => {
   await generate(page);
   await page.getByRole('button', { name: '跳转第 1 步', exact: true }).click();
