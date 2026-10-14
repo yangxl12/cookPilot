@@ -197,6 +197,72 @@ test('新建对话取消延迟生成，旧响应不能入库或跳转', async ({
   await page.goto('/#ai-recipes');
   await expect(page.getByText('还没有 AI 菜谱')).toBeVisible();
 });
+test('全局搜索独立页面支持分类、返回与刷新恢复', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '打开菜单' }).click();
+  await page.getByRole('button', { name: '搜索菜谱、心得与对话' }).click();
+  await expect(page).toHaveURL(/#search$/);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  const input = page.getByRole('searchbox', { name: '全局搜索', exact: true });
+  await expect(input).toBeFocused();
+  await expect(page.getByRole('heading', { name: '找一道菜，也找回做菜的心得' })).toBeVisible();
+  await page.getByRole('button', { name: '鸡蛋', exact: true }).click();
+  await expect(input).toHaveValue('鸡蛋');
+  await page.getByRole('button', { name: '清空搜索' }).click();
+  await expect(input).toHaveValue('');
+  await input.fill('西红柿 鸡蛋');
+  await page.getByRole('button', { name: /^菜谱大全\s*\d+/ }).click();
+  const results = page.getByRole('region', { name: '菜谱大全搜索结果' });
+  await expect(results.locator('mark').filter({ hasText: '鸡蛋' }).first()).toBeVisible();
+  await results.getByRole('button', { name: /^西红柿炒鸡蛋/ }).click();
+  await expect(page.getByRole('heading', { name: '准备好，再开火' })).toBeVisible();
+  await page.getByRole('button', { name: '返回', exact: true }).click();
+  await expect(input).toHaveValue('西红柿 鸡蛋');
+  await expect(page.getByRole('button', { name: /^菜谱大全\s*\d+/ })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await page.reload();
+  await expect(input).toHaveValue('西红柿 鸡蛋');
+  await expect(page.getByRole('button', { name: /^菜谱大全\s*\d+/ })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await page.getByRole('button', { name: /^AI 菜谱\s*\d+/ }).click();
+  await expect(page.getByRole('heading', { name: '没有匹配结果' })).toBeVisible();
+  await page.getByRole('button', { name: '查看全部结果' }).click();
+  await expect(results).toBeVisible();
+  await input.fill('不存在的菜谱[.*');
+  await expect(page.getByRole('heading', { name: '没有匹配结果' })).toBeVisible();
+  await page.getByRole('button', { name: '重新搜索' }).click();
+  await expect(input).toHaveValue('');
+  await input.fill('   ');
+  await expect(page.getByRole('heading', { name: '找一道菜，也找回做菜的心得' })).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/#home$/);
+});
+
+test('全局搜索支持链接直达、同页切换条件与浏览器后退', async ({ page }) => {
+  await page.goto('/#search?q=鸡蛋&scope=catalog');
+  const input = page.getByRole('searchbox', { name: '全局搜索', exact: true });
+  await expect(input).toHaveValue('鸡蛋');
+  await expect(page.getByRole('button', { name: /^菜谱大全\s*\d+/ })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await page.evaluate(() => {
+    location.hash = '#search?q=土豆&scope=ai';
+  });
+  await expect(input).toHaveValue('土豆');
+  await expect(page.getByRole('button', { name: /^AI 菜谱\s*\d+/ })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await page.goBack();
+  await expect(input).toHaveValue('鸡蛋');
+  await expect(page.getByRole('region', { name: '菜谱大全搜索结果' })).toBeVisible();
+});
+
 test('全局搜索可命中心得与后续对话；历史可恢复', async ({ page }) => {
   await generate(page);
   await page.getByRole('button', { name: '心得', exact: true }).click();
@@ -205,13 +271,50 @@ test('全局搜索可命中心得与后续对话；历史可恢复', async ({ pa
   await page.getByRole('button', { name: '返回', exact: true }).click();
   await page.getByRole('button', { name: '打开菜单' }).click();
   await page.getByRole('button', { name: '搜索菜谱、心得与对话' }).click();
-  await page.getByRole('textbox', { name: '全局搜索', exact: true }).fill('青柠');
-  await expect(page.getByRole('button', { name: /西红柿炒鸡蛋.*青柠/ })).toBeVisible();
-  await page.getByRole('button', { name: '关闭弹窗' }).click();
+  await page.getByRole('searchbox', { name: '全局搜索', exact: true }).fill('青柠');
+  await page.getByRole('button', { name: /西红柿炒鸡蛋.*青柠/ }).click();
+  await expect(page.getByRole('heading', { name: '准备好，再开火' })).toBeVisible();
+  await page.getByRole('button', { name: '返回', exact: true }).click();
+  await expect(page.getByRole('searchbox', { name: '全局搜索', exact: true })).toHaveValue('青柠');
+  await page.getByRole('searchbox', { name: '全局搜索', exact: true }).fill('番茄400g');
+  await page.getByRole('button', { name: /^对话历史\s*\d+/ }).click();
+  await page.getByRole('region', { name: '对话历史搜索结果' }).getByRole('button').click();
+  await expect(page.getByRole('button', { name: '使用已有菜谱' })).toBeVisible();
+  await page.goBack();
+  await expect(page.getByRole('heading', { name: '全局搜索', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '返回', exact: true }).click();
+  await page.getByRole('button', { name: '打开菜单' }).click();
   await page.getByRole('button', { name: '对话历史', exact: true }).click();
   await page.getByRole('button', { name: /番茄400g和鸡蛋3个/ }).click();
   await expect(page.getByRole('button', { name: '使用已有菜谱' })).toBeVisible();
 });
+
+for (const width of [320, 390, 480, 1280])
+  test(`全局搜索页面与结果无横向溢出 ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto('/#search');
+    await expect(page.getByRole('heading', { name: '全局搜索', exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.screenshot({ path: `.local/screenshots/search-start-${width}.png`, fullPage: true });
+    await page.getByRole('searchbox', { name: '全局搜索', exact: true }).fill('鸡蛋');
+    await expect(page.getByRole('region', { name: '菜谱大全搜索结果' })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.screenshot({ path: `.local/screenshots/search-results-${width}.png` });
+    await page.evaluate(() => window.scrollTo(0, 600));
+    await expect(page.locator('.search-controls')).toHaveCSS('position', 'sticky');
+    expect(
+      await page
+        .locator('.search-controls')
+        .evaluate((element) => element.getBoundingClientRect().top),
+    ).toBe(76);
+    await page.getByRole('searchbox', { name: '全局搜索', exact: true }).fill('土豆');
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+    await expect(page.getByRole('status')).toHaveText(/找到 \d+ 条结果/);
+  });
 for (const width of [320, 390, 480, 1280])
   test(`布局无横向溢出 ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });

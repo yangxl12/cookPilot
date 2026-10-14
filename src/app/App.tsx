@@ -7,7 +7,8 @@ import { cancelTask, createTask, initialize, pageOwner, pruneHistory } from '../
 import { defaultPreferences, type Task } from '../domain/schema';
 import { formatTime, timerRemaining } from '../domain/rules';
 import { Home } from '../features/home/Home';
-import { HistorySheet, MenuSheet, SearchSheet } from '../features/home/Navigation';
+import { HistorySheet, MenuSheet } from '../features/home/Navigation';
+import { SearchPage } from '../features/search/SearchPage';
 import { RecipePages } from '../features/recipes/RecipePages';
 import { Cooking } from '../features/cooking/Cooking';
 import { Timers } from '../features/cooking/Timers';
@@ -19,6 +20,7 @@ function parseRoute(): Route {
   if (page === 'recipes' || page === 'library/recipes') return { page: 'recipes' };
   if (page === 'ai-recipes' || page === 'library') return { page: 'ai-recipes' };
   if (page === 'settings') return { page: 'settings' };
+  if (page === 'search') return { page: 'search' };
   if (['cook', 'overview', 'finish'].includes(page))
     return {
       page: 'cook',
@@ -36,7 +38,7 @@ export function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState('');
   const [sheet, setSheet] = useState<
-    'menu' | 'search' | 'history' | 'models' | 'preferences' | 'timers' | null
+    'menu' | 'history' | 'models' | 'preferences' | 'timers' | null
   >(null);
   const [, tick] = useState(0);
   const active = useRef<{ controller: AbortController; taskId?: string } | null>(null);
@@ -305,6 +307,7 @@ export function App() {
           {route.page === 'recipes' && <RecipePages />}
           {route.page === 'ai-recipes' && <RecipePages ai />}
           {route.page === 'settings' && <Settings />}
+          {route.page === 'search' && <SearchPage />}
           {route.page === 'cook' && <Cooking key={route.sessionId} />}{' '}
           {data.timers.length > 0 && route.page !== 'cook' && (
             <button
@@ -318,10 +321,7 @@ export function App() {
             </button>
           )}
         </div>
-        {sheet === 'menu' && (
-          <MenuSheet onClose={() => setSheet(null)} onSearch={() => setSheet('search')} />
-        )}{' '}
-        {sheet === 'search' && <SearchSheet onClose={() => setSheet('menu')} />}{' '}
+        {sheet === 'menu' && <MenuSheet onClose={() => setSheet(null)} />}{' '}
         {sheet === 'history' && <HistorySheet onClose={() => setSheet(null)} />}{' '}
         {sheet === 'models' && <ModelSwitch onClose={() => setSheet(null)} />}{' '}
         {sheet === 'preferences' && <PreferencesSheet onClose={() => setSheet(null)} />}{' '}

@@ -14,7 +14,7 @@ import type {
 import type { ModelSnapshot } from '../services/ai/client';
 
 export type Route = {
-  page: 'home' | 'recipes' | 'ai-recipes' | 'settings' | 'cook';
+  page: 'home' | 'recipes' | 'ai-recipes' | 'settings' | 'cook' | 'search';
   sessionId?: string;
 };
 export type Data = {
