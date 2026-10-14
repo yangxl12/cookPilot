@@ -13,7 +13,6 @@ const sources = [
   { id: 'conversations', label: '对话历史' },
 ] as const;
 type Source = (typeof sources)[number]['id'];
-type Scope = 'all' | Source;
 type SearchResult = {
   id: string;
   title: string;
@@ -26,11 +25,7 @@ type SearchResult = {
 
 function initialSearch() {
   const params = new URLSearchParams(location.hash.split('?')[1]);
-  const scope = params.get('scope');
-  return {
-    query: params.get('q') ?? '',
-    scope: sources.some((source) => source.id === scope) ? (scope as Source) : ('all' as const),
-  };
+  return params.get('q') ?? '';
 }
 
 function Highlight({ text, terms }: { text: string; terms: string[] }) {
@@ -53,8 +48,7 @@ function snippet(body: string, terms: string[]) {
 export function SearchPage() {
   const app = useApp();
   const { recipes, versions, sessions, conversations } = app.data;
-  const [query, setQuery] = useState(() => initialSearch().query);
-  const [scope, setScope] = useState<Scope>(() => initialSearch().scope);
+  const [query, setQuery] = useState(initialSearch);
   const input = useRef<HTMLInputElement>(null);
   const terms = [...new Set(query.toLowerCase().trim().split(/\s+/).filter(Boolean))];
 
@@ -62,9 +56,7 @@ export function SearchPage() {
     input.current?.focus();
     const restore = () => {
       if (location.hash.split('?')[0] !== '#search') return;
-      const search = initialSearch();
-      setQuery(search.query);
-      setScope(search.scope);
+      setQuery(initialSearch());
     };
     window.addEventListener('popstate', restore);
     window.addEventListener('hashchange', restore);
@@ -79,10 +71,9 @@ export function SearchPage() {
     if (location.hash.split('?')[0] !== '#search') return;
     const params = new URLSearchParams();
     if (query) params.set('q', query);
-    if (scope !== 'all') params.set('scope', scope);
     history.replaceState(history.state, '', `#search${params.size ? `?${params}` : ''}`);
     window.scrollTo(0, 0);
-  }, [query, scope]);
+  }, [query]);
 
   const all = useMemo<SearchResult[]>(
     () => [
@@ -138,7 +129,6 @@ export function SearchPage() {
         terms.every((term) => `${result.title} ${result.body}`.toLowerCase().includes(term)),
       )
     : [];
-  const visible = matches.filter((result) => scope === 'all' || result.source === scope);
   const chooseQuery = (value: string) => {
     setQuery(value);
     input.current?.focus();
@@ -197,35 +187,24 @@ export function SearchPage() {
               )}
             </div>
           </form>
-          <div className="search-filters" role="group" aria-label="搜索范围">
-            {([{ id: 'all', label: '全部' }, ...sources] as const).map((source) => (
-              <button
-                key={source.id}
-                aria-pressed={scope === source.id}
-                onClick={() => setScope(source.id)}
-              >
-                {source.label}
-              </button>
-            ))}
-          </div>
         </div>
 
         {terms.length > 0 && (
           <div className="search-results">
-            {!visible.length && (
+            {!matches.length && (
               <p className="search-empty" role="status">
                 没有匹配结果
               </p>
             )}
             {sources.map((source) => {
-              const rows = visible.filter((result) => result.source === source.id);
+              const rows = matches.filter((result) => result.source === source.id);
               return rows.length ? (
                 <section
                   className="search-group"
                   key={source.id}
                   aria-label={`${source.label}搜索结果`}
                 >
-                  {scope === 'all' && <h2>{source.label}</h2>}
+                  <h2>{source.label}</h2>
                   {rows.map((result) => (
                     <button
                       className="search-result"

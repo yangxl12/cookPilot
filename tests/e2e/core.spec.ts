@@ -197,7 +197,7 @@ test('新建对话取消延迟生成，旧响应不能入库或跳转', async ({
   await page.goto('/#ai-recipes');
   await expect(page.getByText('还没有 AI 菜谱')).toBeVisible();
 });
-test('全局搜索独立页面支持分类、返回与刷新恢复', async ({ page }) => {
+test('全局搜索直接展示结果、支持返回与刷新恢复', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '打开菜单' }).click();
   await page.getByRole('button', { name: '搜索菜谱、心得与对话' }).click();
@@ -205,32 +205,22 @@ test('全局搜索独立页面支持分类、返回与刷新恢复', async ({ pa
   await expect(page.getByRole('dialog')).toHaveCount(0);
   const input = page.getByRole('searchbox', { name: '全局搜索', exact: true });
   await expect(input).toBeFocused();
+  await expect(page.getByRole('group', { name: '搜索范围' })).toHaveCount(0);
   await expect(page.getByRole('region')).toHaveCount(0);
   await input.fill('鸡蛋');
   await expect(input).toHaveValue('鸡蛋');
   await page.getByRole('button', { name: '清空搜索' }).click();
   await expect(input).toHaveValue('');
   await input.fill('西红柿 鸡蛋');
-  await page.getByRole('button', { name: '菜谱大全', exact: true }).click();
   const results = page.getByRole('region', { name: '菜谱大全搜索结果' });
   await expect(results.locator('mark').filter({ hasText: '鸡蛋' }).first()).toBeVisible();
   await results.getByRole('button', { name: /^西红柿炒鸡蛋/ }).click();
   await expect(page.getByRole('heading', { name: '准备好，再开火' })).toBeVisible();
   await page.getByRole('button', { name: '返回', exact: true }).click();
   await expect(input).toHaveValue('西红柿 鸡蛋');
-  await expect(page.getByRole('button', { name: '菜谱大全', exact: true })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  );
+  await expect(results).toBeVisible();
   await page.reload();
   await expect(input).toHaveValue('西红柿 鸡蛋');
-  await expect(page.getByRole('button', { name: '菜谱大全', exact: true })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  );
-  await page.getByRole('button', { name: 'AI 菜谱', exact: true }).click();
-  await expect(page.getByRole('status')).toHaveText('没有匹配结果');
-  await page.getByRole('button', { name: '全部', exact: true }).click();
   await expect(results).toBeVisible();
   await input.fill('不存在的菜谱[.*');
   await expect(page.getByRole('status')).toHaveText('没有匹配结果');
@@ -242,22 +232,18 @@ test('全局搜索独立页面支持分类、返回与刷新恢复', async ({ pa
   await expect(page).toHaveURL(/#home$/);
 });
 
-test('全局搜索支持链接直达、同页切换条件与浏览器后退', async ({ page }) => {
+test('全局搜索忽略旧链接范围、支持同页切换关键词与浏览器后退', async ({ page }) => {
   await page.goto('/#search?q=鸡蛋&scope=catalog');
   const input = page.getByRole('searchbox', { name: '全局搜索', exact: true });
   await expect(input).toHaveValue('鸡蛋');
-  await expect(page.getByRole('button', { name: '菜谱大全', exact: true })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  );
+  await expect(page.getByRole('region', { name: '菜谱大全搜索结果' })).toBeVisible();
+  await expect(page).not.toHaveURL(/scope=/);
   await page.evaluate(() => {
     location.hash = '#search?q=土豆&scope=ai';
   });
   await expect(input).toHaveValue('土豆');
-  await expect(page.getByRole('button', { name: 'AI 菜谱', exact: true })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  );
+  await expect(page.getByRole('region', { name: '菜谱大全搜索结果' })).toBeVisible();
+  await expect(page).not.toHaveURL(/scope=/);
   await page.goBack();
   await expect(input).toHaveValue('鸡蛋');
   await expect(page.getByRole('region', { name: '菜谱大全搜索结果' })).toBeVisible();
@@ -271,13 +257,16 @@ test('全局搜索可命中心得与后续对话；历史可恢复', async ({ pa
   await page.getByRole('button', { name: '返回', exact: true }).click();
   await page.getByRole('button', { name: '打开菜单' }).click();
   await page.getByRole('button', { name: '搜索菜谱、心得与对话' }).click();
+  await page.getByRole('searchbox', { name: '全局搜索', exact: true }).fill('鸡蛋');
+  for (const source of ['AI 菜谱', '菜谱大全', '对话历史']) {
+    await expect(page.getByRole('region', { name: `${source}搜索结果` })).toBeVisible();
+  }
   await page.getByRole('searchbox', { name: '全局搜索', exact: true }).fill('青柠');
   await page.getByRole('button', { name: /西红柿炒鸡蛋.*青柠/ }).click();
   await expect(page.getByRole('heading', { name: '准备好，再开火' })).toBeVisible();
   await page.getByRole('button', { name: '返回', exact: true }).click();
   await expect(page.getByRole('searchbox', { name: '全局搜索', exact: true })).toHaveValue('青柠');
   await page.getByRole('searchbox', { name: '全局搜索', exact: true }).fill('番茄400g');
-  await page.getByRole('button', { name: '对话历史', exact: true }).click();
   await page.getByRole('region', { name: '对话历史搜索结果' }).getByRole('button').click();
   await expect(page.getByRole('button', { name: '使用已有菜谱' })).toBeVisible();
   await page.goBack();

@@ -1491,29 +1491,6 @@ svg {
   width: 30px;
   height: 36px;
 }
-.search-filters {
-  display: flex;
-  margin-top: 12px;
-  border-bottom: 1px solid var(--line);
-}
-.search-filters button {
-  flex: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  min-height: 46px;
-  padding: 8px 2px 11px;
-  font-size: 12px;
-  white-space: nowrap;
-  color: var(--muted);
-  border-bottom: 2px solid transparent;
-}
-.search-filters button[aria-pressed='true'] {
-  color: var(--green);
-  border-bottom-color: var(--green);
-  font-weight: 600;
-}
 .search-results {
   padding-top: 8px;
 }
