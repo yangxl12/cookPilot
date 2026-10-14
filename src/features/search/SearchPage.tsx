@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, ChefHat, ChevronRight, History, Search, X } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import { useApp, type Route } from '../../app/context';
 import { catalog } from '../../assets/recipes';
 import { contentSearchText, isExpired } from '../../domain/rules';
@@ -8,9 +8,9 @@ import { openBuiltin } from '../../storage/repository';
 import { PageHeader } from '../recipes/RecipePages';
 
 const sources = [
-  { id: 'ai', label: 'AI 菜谱', icon: ChefHat, description: '菜谱正文、制作心得与版本调整' },
-  { id: 'catalog', label: '菜谱大全', icon: BookOpen, description: '200 道家常菜的食材与做法' },
-  { id: 'conversations', label: '对话历史', icon: History, description: '近 30 天的提问与回答' },
+  { id: 'ai', label: 'AI 菜谱' },
+  { id: 'catalog', label: '菜谱大全' },
+  { id: 'conversations', label: '对话历史' },
 ] as const;
 type Source = (typeof sources)[number]['id'];
 type Scope = 'all' | Source;
@@ -19,7 +19,6 @@ type SearchResult = {
   title: string;
   body: string;
   source: Source;
-  detail: string;
   route?: Route;
   builtinId?: string;
   conversationId?: string;
@@ -104,7 +103,6 @@ export function SearchPage() {
                 .map((item) => item.change)
                 .join(' ')}`,
               source: 'ai',
-              detail: `${version.content.minutes} 分钟 · v${version.number}${session.note ? ' · 有制作心得' : ''}`,
               route: { page: 'cook', sessionId: session.id },
             },
           ];
@@ -114,7 +112,6 @@ export function SearchPage() {
         title: recipe.content.title,
         body: `${recipe.sourceText} ${contentSearchText(recipe.content)}`,
         source: 'catalog',
-        detail: `${recipe.content.cuisine} · ${recipe.content.minutes} 分钟 · ${recipe.content.difficulty}`,
         builtinId: recipe.id,
       })),
       ...conversations
@@ -130,7 +127,6 @@ export function SearchPage() {
             )
             .join(' '),
           source: 'conversations',
-          detail: `${new Date(conversation.lastSentAt).toLocaleDateString('zh-CN')} · ${conversation.messages.filter((message) => message.role === 'user').length} 条提问`,
           conversationId: conversation.id,
         })),
     ],
@@ -143,7 +139,6 @@ export function SearchPage() {
       )
     : [];
   const visible = matches.filter((result) => scope === 'all' || result.source === scope);
-  const counts = terms.length ? matches : all;
   const chooseQuery = (value: string) => {
     setQuery(value);
     input.current?.focus();
@@ -186,10 +181,9 @@ export function SearchPage() {
                 enterKeyHint="search"
                 autoComplete="off"
                 aria-label="全局搜索"
-                aria-describedby="search-hint"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="搜索菜谱、食材、心得或对话"
+                placeholder="搜索菜谱、心得、对话"
               />
               {query && (
                 <button
@@ -203,9 +197,6 @@ export function SearchPage() {
               )}
             </div>
           </form>
-          <p className="search-hint" id="search-hint">
-            多个关键词用空格分隔，一起查找更准确
-          </p>
           <div className="search-filters" role="group" aria-label="搜索范围">
             {([{ id: 'all', label: '全部' }, ...sources] as const).map((source) => (
               <button
@@ -214,72 +205,17 @@ export function SearchPage() {
                 onClick={() => setScope(source.id)}
               >
                 {source.label}
-                <span>
-                  {source.id === 'all'
-                    ? counts.length
-                    : counts.filter((result) => result.source === source.id).length}
-                </span>
               </button>
             ))}
           </div>
         </div>
 
-        {!terms.length ? (
-          <div className="search-start">
-            <div className="search-intro">
-              <span className="search-illustration">
-                <Search size={28} strokeWidth={1.5} />
-              </span>
-              <h2>找一道菜，也找回做菜的心得</h2>
-              <p>从菜名或食材开始，查找菜谱和聊过的做法。</p>
-            </div>
-            <section className="search-suggestions" aria-label="关键词建议">
-              <h3>试试这些关键词</h3>
-              <div>
-                {['鸡蛋', '土豆', '鸡肉', '番茄'].map((word) => (
-                  <button key={word} onClick={() => chooseQuery(word)}>
-                    {word}
-                  </button>
-                ))}
-              </div>
-            </section>
-            <section className="search-coverage" aria-label="可搜索的内容">
-              <h3>可以搜索哪些内容</h3>
-              {sources
-                .filter((source) => scope === 'all' || source.id === scope)
-                .map((source) => (
-                  <div className="search-source" key={source.id}>
-                    <source.icon size={21} strokeWidth={1.5} />
-                    <div>
-                      <strong>{source.label}</strong>
-                      <p>{source.description}</p>
-                    </div>
-                    <span>{all.filter((result) => result.source === source.id).length}</span>
-                  </div>
-                ))}
-            </section>
-          </div>
-        ) : (
+        {terms.length > 0 && (
           <div className="search-results">
-            <p className="search-summary" role="status">
-              找到 {visible.length} 条结果
-            </p>
             {!visible.length && (
-              <div className="search-empty">
-                <Search size={30} strokeWidth={1.4} />
-                <h2>没有匹配结果</h2>
-                <p>
-                  {matches.length
-                    ? '其他分类里有匹配内容，试试查看全部结果。'
-                    : '试试更短的菜名、食材，或减少关键词。'}
-                </p>
-                <button
-                  className="secondary"
-                  onClick={() => (matches.length ? setScope('all') : chooseQuery(''))}
-                >
-                  {matches.length ? '查看全部结果' : '重新搜索'}
-                </button>
-              </div>
+              <p className="search-empty" role="status">
+                没有匹配结果
+              </p>
             )}
             {sources.map((source) => {
               const rows = visible.filter((result) => result.source === source.id);
@@ -289,27 +225,19 @@ export function SearchPage() {
                   key={source.id}
                   aria-label={`${source.label}搜索结果`}
                 >
-                  <h2>
-                    <source.icon size={16} />
-                    {source.label}
-                    <span>{rows.length}</span>
-                  </h2>
+                  {scope === 'all' && <h2>{source.label}</h2>}
                   {rows.map((result) => (
                     <button
                       className="search-result"
                       key={result.id}
                       onClick={() => void app.safe(() => open(result))}
                     >
-                      <div className="search-result-copy">
-                        <strong>
-                          <Highlight text={result.title} terms={terms} />
-                        </strong>
-                        <small>{result.detail}</small>
-                        <p>
-                          <Highlight text={snippet(result.body, terms)} terms={terms} />
-                        </p>
-                      </div>
-                      <ChevronRight size={17} aria-hidden="true" />
+                      <strong>
+                        <Highlight text={result.title} terms={terms} />
+                      </strong>
+                      <p>
+                        <Highlight text={snippet(result.body, terms)} terms={terms} />
+                      </p>
                     </button>
                   ))}
                 </section>
