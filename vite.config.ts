@@ -2,10 +2,25 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+
+const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
+const revision = (() => {
+  if (process.env.GITHUB_SHA) return process.env.GITHUB_SHA.slice(0, 7);
+  try {
+    return execFileSync('git', ['rev-parse', '--short=7', 'HEAD'], { encoding: 'utf8' }).trim();
+  } catch {
+    return 'local';
+  }
+})();
+const builtAt = new Date().toISOString();
+const appBuild = { version, revision, builtAt, id: `${revision}.${builtAt}` };
 
 export default defineConfig({
   // Pages supplies /<repo>/; local development and root deployments default to /.
   base: process.env.VITE_BASE_PATH || '/',
+  define: { __APP_BUILD__: JSON.stringify(appBuild) },
   build: {
     // The offline catalog is ~650 KB raw / ~83 KB gzip. Keep app/vendor warnings meaningful.
     chunkSizeWarningLimit: 700,
@@ -20,6 +35,17 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    {
+      name: 'app-version',
+      generateBundle() {
+        // Keep this outside the offline precache so update checks always reach the server.
+        this.emitFile({
+          type: 'asset',
+          fileName: 'version.json',
+          source: JSON.stringify(appBuild),
+        });
+      },
+    },
     {
       name: 'private-local-model',
       // Developer convenience only. Never bundled or served by preview/production.

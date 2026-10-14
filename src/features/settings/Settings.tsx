@@ -17,6 +17,7 @@ import { DEEPSEEK_MODELS, DEEPSEEK_URL, isDeepSeek } from '../../services/ai/pro
 import { uid, type ModelConfig } from '../../domain/schema';
 import { Sheet } from '../../shared/Sheet';
 import { PageHeader } from '../../shared/PageHeader';
+import { AppVersion } from './AppVersion';
 
 export function PreferencesSheet({ onClose }: { onClose: () => void }) {
   const app = useApp();
@@ -397,7 +398,7 @@ export function Settings() {
             <ChevronRight size={17} />
           </button>
         </section>
-        <p className="app-version">CookPilot 1.0 · 在自己的厨房里</p>
+        <AppVersion />
       </main>
       {editor && (
         <ModelEditor

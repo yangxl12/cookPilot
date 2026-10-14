@@ -211,7 +211,7 @@ export function App() {
     if (!ready || !('serviceWorker' in navigator) || import.meta.env.DEV) return;
     // Waiting workers are deliberately not activated while the user is cooking.
     void navigator.serviceWorker
-      .register(`${import.meta.env.BASE_URL}sw.js`)
+      .register(`${import.meta.env.BASE_URL}sw.js`, { updateViaCache: 'none' })
       .catch(() => undefined);
   }, [ready]);
   if (fatal)

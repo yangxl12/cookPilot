@@ -1308,9 +1308,15 @@ svg {
 }
 .app-version {
   text-align: center;
-  color: #96a198;
+  color: var(--muted);
   font-size: 11px;
   padding: 15px 0;
+  line-height: 1.8;
+}
+.app-version .text-button {
+  min-height: 44px;
+  margin-top: 4px;
+  font-size: 12px;
 }
 .empty-model {
   display: flex;
