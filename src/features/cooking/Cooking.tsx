@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ArrowLeft,
   Check,
@@ -27,6 +27,7 @@ import {
 import { askCooking } from '../../services/ai/cooking';
 import { Sheet } from '../../shared/Sheet';
 import { Carousel } from './Carousel';
+import { ActionButton } from '../../shared/ActionButton';
 
 export function UsageList({ content, uses }: { content: Content; uses: Usage[] }) {
   const actual = uses.filter((u) => u.fraction > 0);
@@ -40,6 +41,40 @@ export function UsageList({ content, uses }: { content: Content; uses: Usage[] }
       </div>
     </div>
   ) : null;
+}
+function TimerAction({
+  sessionId,
+  type,
+  id,
+  title,
+  seconds,
+}: {
+  sessionId: string;
+  type: 'prep' | 'step';
+  id: string;
+  title: string;
+  seconds: number;
+}) {
+  const app = useApp();
+  const existing = app.data.timers.find(
+    (timer) => timer.sessionId === sessionId && timer.targetType === type && timer.targetId === id,
+  );
+  const duration = seconds >= 60 ? `${Math.round(seconds / 6) / 10} 分钟` : `${seconds} 秒`;
+  return (
+    <ActionButton
+      className={type === 'step' ? 'primary step-timer' : 'timer-button'}
+      pendingLabel="正在启动…"
+      action={async () => {
+        await startTimer(sessionId, type, id, title, seconds);
+        app.showTimers();
+      }}
+    >
+      <TimerIcon size={type === 'step' ? 18 : 15} />
+      {existing
+        ? `${existing.status === 'paused' ? '已暂停' : existing.status === 'done' ? '时间到' : '计时中'} · 查看计时`
+        : `启动计时 · ${duration}`}
+    </ActionButton>
+  );
 }
 function Note({ session, onClose }: { session: CookingSession; onClose: () => void }) {
   const app = useApp();
@@ -60,6 +95,7 @@ function Note({ session, onClose }: { session: CookingSession; onClose: () => vo
       <button
         className="primary wide"
         disabled={saving}
+        aria-busy={saving}
         onClick={() => {
           setSaving(true);
           void app
@@ -71,7 +107,14 @@ function Note({ session, onClose }: { session: CookingSession; onClose: () => vo
             .finally(() => setSaving(false));
         }}
       >
-        保存心得
+        {saving ? (
+          <>
+            <LoaderCircle size={16} className="spin" />
+            正在保存…
+          </>
+        ) : (
+          '保存心得'
+        )}
       </button>
       <button className="secondary wide" onClick={onClose}>
         取消
@@ -225,14 +268,9 @@ function Questions({
               </label>
             );
           })}
-          <button
-            className="primary wide"
-            onClick={() => {
-              void app.safe(saveProgress);
-            }}
-          >
+          <ActionButton className="primary wide" pendingLabel="正在确认…" action={saveProgress}>
             确认这些进度
-          </button>
+          </ActionButton>
         </div>
       )}
       <div className="cooking-messages" aria-live="polite">
@@ -269,18 +307,15 @@ function Questions({
                 </ul>
                 {message.proposalStatus === 'pending' ? (
                   <>
-                    <button
+                    <ActionButton
                       className="primary wide"
                       disabled={!!app.busy}
-                      onClick={() => {
-                        void app.safe(
-                          () => saveProposal(message.id),
-                          '已更新本次制作，原版本已保留',
-                        );
-                      }}
+                      pendingLabel="正在更新…"
+                      success="已更新本次制作，原版本已保留"
+                      action={() => saveProposal(message.id)}
                     >
                       确认更新本次做法
-                    </button>
+                    </ActionButton>
                     <button
                       className="secondary wide"
                       onClick={() => {
@@ -362,6 +397,18 @@ export function Cooking() {
   );
   const version = versionSnapshot?.id === session?.versionId ? versionSnapshot?.version : undefined;
   const [sheet, setSheet] = useState<'note' | 'questions' | 'steps' | 'versions' | null>(null);
+  const [pendingChecks, setPendingChecks] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    if (!session) return;
+    setPendingChecks((previous) => {
+      const remaining = Object.entries(previous).filter(
+        ([id, checked]) => session.checked.includes(id) !== checked,
+      );
+      return remaining.length === Object.keys(previous).length
+        ? previous
+        : Object.fromEntries(remaining);
+    });
+  }, [session?.checked]);
   const versions = useLiveQuery(
     () =>
       sheet === 'versions' && session
@@ -403,24 +450,30 @@ export function Cooking() {
   const select = (currentCard: number) => {
     void app.safe(() => db.sessions.update(session.id, { currentCard }));
   };
-  const timer = (type: 'prep' | 'step', id: string, title: string, seconds: number) => {
-    void app.safe(async () => {
-      await startTimer(session.id, type, id, title, seconds);
-      app.showTimers();
-    });
-  };
+  const isChecked = (id: string) => pendingChecks[id] ?? session.checked.includes(id);
   const check = (id: string, checked: boolean) => {
-    void app.safe(() =>
-      db.transaction('rw', db.sessions, async () => {
-        const fresh = await db.sessions.get(session.id);
-        if (!fresh) return;
-        await db.sessions.update(session.id, {
-          checked: checked
-            ? [...new Set([...fresh.checked, id])]
-            : fresh.checked.filter((c) => c !== id),
-        });
-      }),
-    );
+    setPendingChecks((previous) => ({ ...previous, [id]: checked }));
+    void app
+      .safe(() =>
+        db.transaction('rw', db.sessions, async () => {
+          const fresh = await db.sessions.get(session.id);
+          if (!fresh) throw new Error('制作记录已被删除');
+          await db.sessions.update(session.id, {
+            checked: checked
+              ? [...new Set([...fresh.checked, id])]
+              : fresh.checked.filter((c) => c !== id),
+          });
+          return true;
+        }),
+      )
+      .then((saved) => {
+        if (!saved)
+          setPendingChecks((previous) => {
+            const next = { ...previous };
+            delete next[id];
+            return next;
+          });
+      });
   };
   const preparation = (
     <>
@@ -465,17 +518,21 @@ export function Cooking() {
         ))}
       </section>
       <section className="prep-section">
-        <h2>备菜</h2>
+        <h2 className="prep-heading">
+          备菜{' '}
+          <span>
+            {content.prep.filter((prep) => isChecked(prep.id)).length} / {content.prep.length}{' '}
+            已备好
+          </span>
+        </h2>
         {content.prep.map((prep) => (
-          <div
-            className={`prep-item ${session.checked.includes(prep.id) ? 'checked' : ''}`}
-            key={prep.id}
-          >
+          <div className={`prep-item ${isChecked(prep.id) ? 'checked' : ''}`} key={prep.id}>
             <label className="prep-check">
               <input
                 type="checkbox"
                 aria-label={prep.title}
-                checked={session.checked.includes(prep.id)}
+                checked={isChecked(prep.id)}
+                disabled={pendingChecks[prep.id] !== undefined}
                 onChange={(e) => check(prep.id, e.target.checked)}
               />
               <span>
@@ -485,13 +542,13 @@ export function Cooking() {
             </label>
             {prep.parallel && <p className="parallel-hint">{prep.parallel}</p>}
             {prep.seconds > 0 && (
-              <button
-                className="timer-button"
-                onClick={() => timer('prep', prep.id, prep.title, prep.seconds)}
-              >
-                <TimerIcon size={15} />
-                计时 {Math.round((prep.seconds / 60) * 10) / 10} 分钟
-              </button>
+              <TimerAction
+                sessionId={session.id}
+                type="prep"
+                id={prep.id}
+                title={prep.title}
+                seconds={prep.seconds}
+              />
             )}
           </div>
         ))}
@@ -561,16 +618,13 @@ export function Cooking() {
                 <p className="step-action">{renderAction(content, step)}</p>
                 <UsageList content={content} uses={step.uses} />
                 {step.seconds > 0 && (
-                  <button
-                    className="timer-button step-timer"
-                    onClick={() => timer('step', step.id, step.title, step.seconds)}
-                  >
-                    <TimerIcon size={18} />
-                    启动计时 ·{' '}
-                    {step.seconds >= 60
-                      ? `${Math.round(step.seconds / 6) / 10} 分钟`
-                      : `${step.seconds} 秒`}
-                  </button>
+                  <TimerAction
+                    sessionId={session.id}
+                    type="step"
+                    id={step.id}
+                    title={step.title}
+                    seconds={step.seconds}
+                  />
                 )}
                 <div className="completion-signal">
                   <h3>
@@ -599,6 +653,7 @@ export function Cooking() {
           {['准备', ...content.steps.map((s) => s.title)].map((title, i) => (
             <button
               className={`step-directory-row ${i === index ? 'active' : ''}`}
+              aria-current={i === index ? 'step' : undefined}
               key={i}
               onClick={() => {
                 select(i);

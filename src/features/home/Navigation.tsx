@@ -23,6 +23,7 @@ export function MenuSheet({ onClose }: { onClose: () => void }) {
         ).map((item) => (
           <button
             key={item.page}
+            aria-current={app.route.page === item.page ? 'page' : undefined}
             onClick={() => {
               onClose();
               void app.navigate({ page: item.page });

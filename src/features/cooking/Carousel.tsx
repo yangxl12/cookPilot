@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react';
+import { ArrowRight } from 'lucide-react';
 
 export function Carousel({
   index,
@@ -98,6 +99,16 @@ export function Carousel({
           >
             <div className="step-card-scroll" tabIndex={i === index ? 0 : -1}>
               {child}
+              {i < labels.length - 1 && (
+                <button
+                  className="primary wide card-next"
+                  aria-label={`下一步：${labels[i + 1]}`}
+                  onClick={() => onSelect(i + 1)}
+                >
+                  {i === 0 ? '开始烹饪' : '下一步'}
+                  <ArrowRight size={17} />
+                </button>
+              )}
             </div>
           </article>
         ))}

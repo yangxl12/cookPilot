@@ -30,7 +30,7 @@ export type AppContext = {
   busy: string | null;
   navigate: (route: Route) => Promise<void>;
   back: () => void;
-  notify: (text: string) => void;
+  notify: (text: string, tone?: 'info' | 'success' | 'error') => void;
   safe: <T>(operation: () => Promise<T>, success?: string) => Promise<T | undefined>;
   work: (
     label: string,

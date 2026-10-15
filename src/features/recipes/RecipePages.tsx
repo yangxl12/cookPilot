@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useDeferredValue, useMemo, useState } from 'react';
+import { useDeferredValue, useMemo, useRef, useState } from 'react';
 import {
   BookOpen,
   ChefHat,
@@ -9,6 +9,7 @@ import {
   RotateCcw,
   Search,
   Trash2,
+  X,
 } from 'lucide-react';
 import { useApp } from '../../app/context';
 import { useCatalog } from '../../shared/useCatalog';
@@ -17,6 +18,7 @@ import { cookAgain, deleteSession, openBuiltin } from '../../storage/repository'
 import { db } from '../../storage/db';
 import { PageHeader } from '../../shared/PageHeader';
 import { Sheet } from '../../shared/Sheet';
+import { ActionButton } from '../../shared/ActionButton';
 
 export function RecipePages({ ai = false }: { ai?: boolean }) {
   const app = useApp();
@@ -25,6 +27,7 @@ export function RecipePages({ ai = false }: { ai?: boolean }) {
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('全部');
   const [deleting, setDeleting] = useState<string | null>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
   const deferredSearch = useDeferredValue(search);
   const tokens = useMemo(
     () => deferredSearch.toLowerCase().trim().split(/\s+/).filter(Boolean),
@@ -92,14 +95,13 @@ export function RecipePages({ ai = false }: { ai?: boolean }) {
   const builtinRows = useMemo(
     () =>
       builtinPage.visible.map((recipe) => (
-        <button
+        <ActionButton
           className="catalog-row"
           key={recipe.id}
-          onClick={() => {
-            void app.safe(async () => {
-              const session = await openBuiltin(recipe, data.preferences);
-              await app.navigate({ page: 'cook', sessionId: session.id });
-            });
+          pendingLabel="正在打开菜谱…"
+          action={async () => {
+            const session = await openBuiltin(recipe, data.preferences);
+            await app.navigate({ page: 'cook', sessionId: session.id });
           }}
         >
           <span className="recipe-placeholder">
@@ -112,7 +114,7 @@ export function RecipePages({ ai = false }: { ai?: boolean }) {
             </span>
           </span>
           <ChevronRight size={17} />
-        </button>
+        </ActionButton>
       )),
     [builtinPage.visible, data.preferences, app.safe, app.navigate],
   );
@@ -137,30 +139,28 @@ export function RecipePages({ ai = false }: { ai?: boolean }) {
             <p className="muted small">{version.content.conditions}</p>
             {session.note && <p className="note-preview">{session.note}</p>}
             <div className="row-actions">
-              <button
-                className="text-button"
-                onClick={() => {
-                  void app.safe(async () => {
-                    await db.sessions.update(session.id, { currentCard: 0 });
-                    await app.navigate({ page: 'cook', sessionId: session.id });
-                  });
+              <ActionButton
+                className="secondary"
+                pendingLabel="正在打开…"
+                action={async () => {
+                  await db.sessions.update(session.id, { currentCard: 0 });
+                  await app.navigate({ page: 'cook', sessionId: session.id });
                 }}
               >
                 查看指南
                 <ChevronRight size={14} />
-              </button>
-              <button
+              </ActionButton>
+              <ActionButton
                 className="text-button"
-                onClick={() => {
-                  void app.safe(async () => {
-                    const next = await cookAgain(session.id);
-                    await app.navigate({ page: 'cook', sessionId: next.id });
-                  });
+                pendingLabel="正在准备…"
+                action={async () => {
+                  const next = await cookAgain(session.id);
+                  await app.navigate({ page: 'cook', sessionId: next.id });
                 }}
               >
                 <RotateCcw size={14} />
                 再做一次
-              </button>
+              </ActionButton>
               <button
                 className="icon-button muted"
                 aria-label={`删除${version.content.title}制作记录`}
@@ -185,28 +185,46 @@ export function RecipePages({ ai = false }: { ai?: boolean }) {
     <>
       <PageHeader title={ai ? 'AI 菜谱' : '菜谱大全'} />
       <main className="page list-page">
-        <label className="search-field">
-          <Search size={18} />
-          <input
-            aria-label="搜索菜名"
-            placeholder="搜索菜名"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </label>
-        {!ai && (
-          <>
+        <div className="list-controls">
+          <div className="search-field">
+            <Search size={18} />
+            <input
+              ref={searchInput}
+              aria-label="搜索菜名"
+              placeholder="搜索菜名"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            {search && (
+              <button
+                className="icon-button"
+                aria-label="清空搜索"
+                onClick={() => {
+                  setSearch('');
+                  searchInput.current?.focus();
+                }}
+              >
+                <X size={17} />
+              </button>
+            )}
+          </div>
+          {!ai && (
             <div className="category-tabs">
               {['全部', '中式', '西式与日式'].map((c) => (
                 <button
                   key={c}
                   className={category === c ? 'active' : ''}
+                  aria-pressed={category === c}
                   onClick={() => setCategory(c)}
                 >
                   {c}
                 </button>
               ))}
             </div>
+          )}
+        </div>
+        {!ai && (
+          <>
             <p className="list-count">{builtins.length} 道家常菜</p>
             {builtinRows}
             {builtinPage.hasMore && (
@@ -227,6 +245,18 @@ export function RecipePages({ ai = false }: { ai?: boolean }) {
           <div className="empty-state">
             <BookOpen size={32} strokeWidth={1.3} />
             <p>{search ? '没有匹配的菜谱' : '还没有 AI 菜谱'}</p>
+            {search && (
+              <button
+                className="secondary"
+                onClick={() => {
+                  setSearch('');
+                  setCategory('全部');
+                  searchInput.current?.focus();
+                }}
+              >
+                重置筛选
+              </button>
+            )}
             {!search && (
               <button
                 className="primary"
@@ -243,17 +273,17 @@ export function RecipePages({ ai = false }: { ai?: boolean }) {
       {deleting && (
         <Sheet title="删除制作记录？" onClose={() => setDeleting(null)}>
           <p>此记录的心得、问答与计时也会删除。其他制作记录会保留。</p>
-          <button
+          <ActionButton
             className="danger wide"
-            onClick={() => {
-              void app.safe(async () => {
-                await deleteSession(deleting);
-                setDeleting(null);
-              }, '已删除制作记录');
+            pendingLabel="正在删除…"
+            success="已删除制作记录"
+            action={async () => {
+              await deleteSession(deleting);
+              setDeleting(null);
             }}
           >
             确认删除
-          </button>
+          </ActionButton>
           <button className="secondary wide" onClick={() => setDeleting(null)}>
             取消
           </button>

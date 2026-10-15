@@ -161,7 +161,9 @@ test('修复后仍有用量冲突时保留候选，禁止保存无效菜谱', as
 });
 test('空白初态；推荐、生成、刷新、心得、再次制作', async ({ page }) => {
   await generate(page);
-  await page.getByRole('button', { name: '跳转第 1 步', exact: true }).click();
+  await page.getByRole('checkbox', { name: '处理食材', exact: true }).check();
+  await expect(page.getByText('1 / 1 已备好', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '下一步：炒蛋盛出', exact: true }).click();
   await expect(page.getByRole('heading', { name: '炒蛋盛出' })).toBeVisible();
   await page.reload();
   await expect(page.getByRole('heading', { name: '炒蛋盛出' })).toBeVisible();
@@ -208,15 +210,57 @@ test('计时暂停与刷新恢复，心得取消保留原文', async ({ page }) 
   await page.getByRole('button', { name: '关闭弹窗' }).click();
   await page.reload();
   await page.getByRole('button', { name: '计时器', exact: true }).click();
-  await expect(page.getByText('已暂停', { exact: false })).toBeVisible();
+  await expect(
+    page.getByRole('dialog', { name: '计时器', exact: true }).getByText('已暂停', { exact: false }),
+  ).toBeVisible();
   await page.getByRole('button', { name: '继续炒蛋盛出' }).click();
   await page.getByRole('button', { name: '关闭弹窗' }).click();
+  await expect(page.getByRole('button', { name: '计时中 · 查看计时' })).toBeVisible();
   await page.getByRole('button', { name: '心得', exact: true }).click();
   await page.getByRole('textbox', { name: '心得内容' }).fill('不会保存的草稿');
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: '心得', exact: true }).click();
   await expect(page.getByRole('textbox', { name: '心得内容' })).toHaveValue('');
 });
+test('备菜勾选即时反馈，保存失败回退并支持重试与刷新', async ({ page }) => {
+  await generate(page);
+  await page.evaluate(async () => {
+    const path = '/src/storage/db.ts';
+    const { db } = await import(path);
+    const update = db.sessions.update.bind(db.sessions);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    Object.assign(window, { releasePrepSave: release });
+    let first = true;
+    db.sessions.update = async (id: string, changes: Record<string, unknown>) => {
+      if ('checked' in changes && first) {
+        first = false;
+        await gate;
+        throw new Error('备菜保存失败，请重试');
+      }
+      return update(id, changes);
+    };
+  });
+  const checkbox = page.getByRole('checkbox', { name: '处理食材', exact: true });
+  await checkbox.check();
+  await expect(page.getByText('1 / 1 已备好', { exact: true })).toBeVisible();
+  await expect(checkbox).toBeDisabled();
+  await page.evaluate(() => {
+    (window as typeof window & { releasePrepSave: () => void }).releasePrepSave();
+  });
+  await expect(page.getByRole('alert')).toContainText('备菜保存失败，请重试');
+  await expect(checkbox).not.toBeChecked();
+  await expect(checkbox).toBeEnabled();
+  await expect(page.getByText('0 / 1 已备好', { exact: true })).toBeVisible();
+  await checkbox.check();
+  await expect(checkbox).toBeEnabled();
+  await page.reload();
+  await expect(checkbox).toBeChecked();
+  await expect(page.getByText('1 / 1 已备好', { exact: true })).toBeVisible();
+});
+
 test('问答分离；备菜阶段；确认进度不依赖翻卡', async ({ page }) => {
   await generate(page);
   await page.getByRole('button', { name: '问问 AI', exact: true }).click();
@@ -264,11 +308,88 @@ test('新建对话取消延迟生成，旧响应不能入库或跳转', async ({
   });
   await page.getByRole('button', { name: '生成菜谱' }).click();
   await expect(page.getByRole('status').filter({ hasText: '正在生成' })).toBeVisible();
+  const generating = page.getByRole('button', { name: '正在生成…', exact: true });
+  await expect(generating).toBeDisabled();
+  await expect(generating).toHaveAttribute('aria-busy', 'true');
   await page.getByRole('button', { name: '新建对话' }).click();
   release();
   await expect(page.getByRole('heading', { name: '想做什么菜？' })).toBeVisible();
   await page.goto('/#ai-recipes');
   await expect(page.getByText('还没有 AI 菜谱')).toBeVisible();
+});
+
+test('首页可直达菜谱，筛选可清空并恢复输入焦点', async ({ page }) => {
+  await page.route('**/__local-model', (route) => route.fulfill({ status: 404 }));
+  await page.goto('/');
+  await page.getByRole('button', { name: '逛逛菜谱大全' }).click();
+  const search = page.getByRole('textbox', { name: '搜索菜名' });
+  await search.fill('鸡蛋');
+  await page.getByRole('button', { name: '清空搜索' }).click();
+  await expect(search).toHaveValue('');
+  await expect(search).toBeFocused();
+  await expect(page.getByText('200 道家常菜')).toBeVisible();
+  await page.getByRole('button', { name: '西式与日式', exact: true }).click();
+  await expect(page.getByRole('button', { name: '西式与日式', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await search.fill('西红柿炒鸡蛋');
+  await page.getByRole('button', { name: '重置筛选' }).click();
+  await expect(search).toHaveValue('');
+  await expect(search).toBeFocused();
+  await expect(page.getByRole('button', { name: '全部', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await expect(page.getByText('200 道家常菜')).toBeVisible();
+});
+
+test('设置保存等待期间防止重复提交，失败后保留输入并可重试', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '通用设置', exact: true }).click();
+  await page.getByRole('textbox', { name: '口味', exact: true }).fill('清淡少辣');
+  await page.evaluate(async () => {
+    const path = '/src/storage/db.ts';
+    const { db } = await import(path);
+    const put = db.settings.put.bind(db.settings);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    Object.assign(window, { releaseSave: release, preferenceSaves: 0 });
+    db.settings.put = async (value: { id: string; value: unknown }) => {
+      if (value.id !== 'preferences') return put(value);
+      const state = window as typeof window & { preferenceSaves: number };
+      state.preferenceSaves++;
+      if (state.preferenceSaves === 1) {
+        await gate;
+        throw new Error('保存失败，请重试');
+      }
+      return put(value);
+    };
+  });
+  await page.getByRole('button', { name: '保存设置', exact: true }).click();
+  const saving = page.getByRole('button', { name: '正在保存…', exact: true });
+  await expect(saving).toHaveAttribute('aria-busy', 'true');
+  await expect(saving).toBeDisabled();
+  await saving.evaluate((button: HTMLButtonElement) => {
+    button.click();
+  });
+  await page.evaluate(() => {
+    (window as typeof window & { releaseSave: () => void }).releaseSave();
+  });
+  await expect(page.getByRole('alert')).toContainText('保存失败，请重试');
+  await expect(page.getByRole('textbox', { name: '口味', exact: true })).toHaveValue('清淡少辣');
+  await page.getByRole('button', { name: '保存设置', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('status')).toContainText('通用设置已保存');
+  expect(
+    await page.evaluate(
+      () => (window as typeof window & { preferenceSaves: number }).preferenceSaves,
+    ),
+  ).toBe(2);
+  await page.getByRole('button', { name: '通用设置', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: '口味', exact: true })).toHaveValue('清淡少辣');
 });
 test('全局搜索直接展示结果、支持返回与刷新恢复', async ({ page }) => {
   await page.goto('/');

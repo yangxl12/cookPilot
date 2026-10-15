@@ -3,6 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight,
+  BookOpen,
   ChefHat,
   ChevronDown,
   Clock3,
@@ -17,6 +18,7 @@ import { commitGeneration, findExisting, reuseRecipe } from '../../storage/repos
 import { uid, type Candidate, type Content, type Conversation } from '../../domain/schema';
 import { restrictionConflict, identity, effectivePreferences } from '../../domain/rules';
 import { recommend, generate } from '../../services/ai/cooking';
+import { ActionButton } from '../../shared/ActionButton';
 
 export function Home() {
   const app = useApp();
@@ -256,7 +258,7 @@ export function Home() {
                 await setSetting('activeConversationId', null);
                 setPrompt('');
                 setDraft(null);
-              });
+              }, '已新建对话');
             }}
           >
             <MessageSquarePlus size={20} />
@@ -279,6 +281,7 @@ export function Home() {
         {!conversation && (
           <div className="home-welcome">
             <h1>想做什么菜？</h1>
+            <p>说说食材和口味，一起决定这顿吃什么。</p>
           </div>
         )}
         {conversation && (
@@ -314,16 +317,15 @@ export function Home() {
                       </div>
                       <p className="muted small">{candidate.summary}</p>
                       {conflict && <p className="warning">{conflict}</p>}
-                      <button
-                        className="recommendation-select"
+                      <ActionButton
+                        className="primary recommendation-select"
                         disabled={!!busy || !!conflict}
-                        onClick={() => {
-                          void app.safe(() => select(candidate));
-                        }}
+                        pendingLabel={version ? '正在打开…' : '正在生成…'}
+                        action={() => select(candidate)}
                       >
                         {version ? '使用已有菜谱' : '生成菜谱'}
                         <ArrowRight size={15} />
-                      </button>
+                      </ActionButton>
                     </article>
                   );
                 })}
@@ -381,6 +383,7 @@ export function Home() {
             <button
               className="prompt-submit"
               aria-label="发送消息"
+              aria-busy={!!busy}
               disabled={!!busy || !conversationReady || !prompt.trim()}
             >
               {busy ? <LoaderCircle size={19} className="spin" /> : <ArrowRight size={21} />}
@@ -391,7 +394,10 @@ export function Home() {
               {busy}
               <button
                 onClick={() => {
-                  void app.cancel();
+                  void app.safe(async () => {
+                    await app.cancel();
+                    app.notify('已取消，可继续发送');
+                  });
                 }}
               >
                 取消
@@ -399,6 +405,16 @@ export function Home() {
             </div>
           )}
         </div>
+        {!conversation && (
+          <button
+            className="home-browse text-button"
+            onClick={() => void app.navigate({ page: 'recipes' })}
+          >
+            <BookOpen size={17} />
+            逛逛菜谱大全
+            <ArrowRight size={15} />
+          </button>
+        )}
       </main>
     </>
   );

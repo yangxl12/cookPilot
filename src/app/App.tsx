@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { LoaderCircle, X } from 'lucide-react';
+import { CheckCircle2, CircleAlert, Info, LoaderCircle, X } from 'lucide-react';
 import { Context, type AppContext, type Route, type Work } from './context';
 import { db, setSetting } from '../storage/db';
 import { cancelTask, createTask, initialize, pageOwner, pruneHistory } from '../storage/repository';
@@ -44,26 +44,29 @@ export function App() {
   const [fatal, setFatal] = useState('');
   const [route, setRoute] = useState<Route>(parseRoute);
   const [busy, setBusy] = useState<string | null>(null);
-  const [toast, setToast] = useState('');
+  const [toast, setToast] = useState<{
+    text: string;
+    tone: 'info' | 'success' | 'error';
+  } | null>(null);
   const [sheet, setSheet] = useState<
     'menu' | 'history' | 'models' | 'preferences' | 'timers' | null
   >(null);
   const active = useRef<{ controller: AbortController; taskId?: string } | null>(null);
   const toastTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const data = useAppData();
-  const notify = useCallback((text: string) => {
-    setToast(text);
+  const notify = useCallback((text: string, tone: 'info' | 'success' | 'error' = 'info') => {
+    setToast({ text, tone });
     clearTimeout(toastTimeout.current);
-    toastTimeout.current = setTimeout(() => setToast(''), 6500);
+    toastTimeout.current = setTimeout(() => setToast(null), tone === 'error' ? 9000 : 4000);
   }, []);
   const safe: AppContext['safe'] = useCallback(
     async (operation, success) => {
       try {
         const result = await operation();
-        if (success) notify(success);
+        if (success) notify(success, 'success');
         return result;
       } catch (error) {
-        notify(error instanceof Error ? error.message.slice(0, 700) : '操作失败，请重试');
+        notify(error instanceof Error ? error.message.slice(0, 700) : '操作失败，请重试', 'error');
         return undefined;
       }
     },
@@ -141,7 +144,7 @@ export function App() {
           })
           .catch(() => undefined);
       if (!request.controller.signal.aborted)
-        notify(error instanceof Error ? error.message.slice(0, 700) : '请求失败，请重试');
+        notify(error instanceof Error ? error.message.slice(0, 700) : '请求失败，请重试', 'error');
     } finally {
       if (active.current === request) {
         active.current = null;
@@ -279,9 +282,19 @@ export function App() {
         {sheet === 'preferences' && <PreferencesSheet onClose={() => setSheet(null)} />}{' '}
         {sheet === 'timers' && <Timers onClose={() => setSheet(null)} />}{' '}
         {toast && (
-          <div className="toast" role="status">
-            <span>{toast}</span>
-            <button className="icon-button" aria-label="关闭提示" onClick={() => setToast('')}>
+          <div
+            className={`toast toast-${toast.tone}`}
+            role={toast.tone === 'error' ? 'alert' : 'status'}
+          >
+            {toast.tone === 'success' ? (
+              <CheckCircle2 size={19} aria-hidden="true" />
+            ) : toast.tone === 'error' ? (
+              <CircleAlert size={19} aria-hidden="true" />
+            ) : (
+              <Info size={19} aria-hidden="true" />
+            )}
+            <span>{toast.text}</span>
+            <button className="icon-button" aria-label="关闭提示" onClick={() => setToast(null)}>
               <X size={16} />
             </button>
           </div>

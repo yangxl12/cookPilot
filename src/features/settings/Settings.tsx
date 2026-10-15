@@ -7,6 +7,7 @@ import {
   EyeOff,
   LoaderCircle,
   Plus,
+  ShieldCheck,
   Trash2,
 } from 'lucide-react';
 import { useApp } from '../../app/context';
@@ -18,6 +19,7 @@ import { uid, type ModelConfig } from '../../domain/schema';
 import { Sheet } from '../../shared/Sheet';
 import { PageHeader } from '../../shared/PageHeader';
 import { AppVersion } from './AppVersion';
+import { ActionButton } from '../../shared/ActionButton';
 
 export function PreferencesSheet({ onClose }: { onClose: () => void }) {
   const app = useApp();
@@ -68,17 +70,17 @@ export function PreferencesSheet({ onClose }: { onClose: () => void }) {
             ))}
           </div>
         </fieldset>
-        <button
+        <ActionButton
           className="primary wide"
-          onClick={() => {
-            void app.safe(async () => {
-              await setSetting('preferences', draft);
-              onClose();
-            }, '通用设置已保存');
+          pendingLabel="正在保存…"
+          success="通用设置已保存"
+          action={async () => {
+            await setSetting('preferences', draft);
+            onClose();
           }}
         >
           保存设置
-        </button>
+        </ActionButton>
         <button className="secondary wide" onClick={onClose}>
           取消
         </button>
@@ -91,14 +93,15 @@ export function ModelSwitch({ onClose }: { onClose: () => void }) {
   return (
     <Sheet title="选择模型" onClose={onClose}>
       {app.data.models.map((model) => (
-        <button
+        <ActionButton
           className="model-option"
           key={model.id}
-          onClick={() => {
-            void app.safe(async () => {
-              await setSetting('activeModelId', model.id);
-              onClose();
-            });
+          aria-pressed={app.data.activeModelId === model.id}
+          pendingLabel="正在切换…"
+          success={`已切换至${model.name}`}
+          action={async () => {
+            await setSetting('activeModelId', model.id);
+            onClose();
           }}
         >
           <span>
@@ -106,7 +109,7 @@ export function ModelSwitch({ onClose }: { onClose: () => void }) {
             <small>{model.model}</small>
           </span>
           {app.data.activeModelId === model.id && <Check size={19} />}
-        </button>
+        </ActionButton>
       ))}
       <button
         className="secondary wide"
@@ -290,8 +293,15 @@ function ModelEditor({ initial, onClose }: { initial?: ModelConfig; onClose: () 
             {result}
           </p>
         )}
-        <button className="primary wide" disabled={!loaded || saving}>
-          保存模型
+        <button className="primary wide" disabled={!loaded || saving} aria-busy={saving}>
+          {saving ? (
+            <>
+              <LoaderCircle size={16} className="spin" />
+              正在保存…
+            </>
+          ) : (
+            '保存模型'
+          )}
         </button>
         <button className="secondary wide" type="button" onClick={onClose}>
           取消
@@ -334,20 +344,24 @@ export function Settings() {
             </button>
           )}
           {app.data.models.map((model) => (
-            <article className="model-card" key={model.id}>
+            <article
+              className={`model-card ${app.data.activeModelId === model.id ? 'selected' : ''}`}
+              key={model.id}
+            >
               <div className="model-card-head">
-                <button
+                <ActionButton
                   className="model-select"
                   aria-label={`使用${model.name}`}
-                  onClick={() => {
-                    void app.safe(() => setSetting('activeModelId', model.id));
-                  }}
+                  aria-pressed={app.data.activeModelId === model.id}
+                  pendingLabel="正在切换…"
+                  success={`已切换至${model.name}`}
+                  action={() => setSetting('activeModelId', model.id)}
                 >
                   <span
                     className={`radio ${app.data.activeModelId === model.id ? 'selected' : ''}`}
                   />
                   <strong>{model.name}</strong>
-                </button>
+                </ActionButton>
                 <button className="text-button" onClick={() => setEditor(model)}>
                   编辑
                 </button>
@@ -369,29 +383,33 @@ export function Settings() {
           <p className="small muted settings-description">
             菜谱、对话和心得保存在当前浏览器。定期导出一份备份。
           </p>
-          <button
+          <ActionButton
             className="settings-row"
-            onClick={() => {
-              void app.safe(download, '已导出脱敏数据');
-            }}
+            pendingLabel="正在导出…"
+            success="已导出脱敏数据"
+            action={download}
           >
             <ArrowDownToLine size={19} />
             <span>导出数据 JSON</span>
             <ChevronRight size={17} />
-          </button>
-          <button
+          </ActionButton>
+          <ActionButton
             className="settings-row"
-            onClick={() => {
-              void app.safe(async () => {
-                const granted = await navigator.storage?.persist?.();
-                setPersistent(granted ? '已获准保留本机存储' : '浏览器暂未批准；请定期导出备份');
-              });
+            pendingLabel="正在申请…"
+            action={async () => {
+              const granted = await navigator.storage?.persist?.();
+              setPersistent(granted ? '已获准保留本机存储' : '浏览器暂未批准；请定期导出备份');
             }}
           >
+            <ShieldCheck size={19} />
             <span>申请保留本机存储</span>
             <ChevronRight size={17} />
-          </button>
-          {persistent && <p className="small muted">{persistent}</p>}
+          </ActionButton>
+          {persistent && (
+            <p className="small muted" role="status">
+              {persistent}
+            </p>
+          )}
           <button className="settings-row danger-text" onClick={() => setClear(true)}>
             <Trash2 size={18} />
             <span>清除全部本地数据</span>
@@ -409,17 +427,17 @@ export function Settings() {
       {deleting && (
         <Sheet title="删除模型配置？" onClose={() => setDeleting(null)}>
           <p>删除「{deleting.name}」及其本机 Key，已保存菜谱仍可使用。</p>
-          <button
+          <ActionButton
             className="danger wide"
-            onClick={() => {
-              void app.safe(async () => {
-                await deleteModel(deleting.id);
-                setDeleting(null);
-              }, '模型已删除');
+            pendingLabel="正在删除…"
+            success="模型已删除"
+            action={async () => {
+              await deleteModel(deleting.id);
+              setDeleting(null);
             }}
           >
             确认删除
-          </button>
+          </ActionButton>
           <button className="secondary wide" onClick={() => setDeleting(null)}>
             取消
           </button>
@@ -428,19 +446,19 @@ export function Settings() {
       {clear && (
         <Sheet title="清除全部本地数据？" onClose={() => setClear(false)}>
           <p>所有用户菜谱、制作记录、心得、计时、对话、偏好和模型 Key 都会删除。请先导出备份。</p>
-          <button
+          <ActionButton
             className="danger wide"
-            onClick={() => {
-              void app.safe(async () => {
-                await app.cancel();
-                await clearData();
-                setClear(false);
-                await app.navigate({ page: 'home' });
-              }, '本地数据已清除');
+            pendingLabel="正在清除…"
+            success="本地数据已清除"
+            action={async () => {
+              await app.cancel();
+              await clearData();
+              setClear(false);
+              await app.navigate({ page: 'home' });
             }}
           >
             确认清除全部数据
-          </button>
+          </ActionButton>
           <button className="secondary wide" onClick={() => setClear(false)}>
             取消
           </button>

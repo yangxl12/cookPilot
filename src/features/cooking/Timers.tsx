@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Pause, Play, Plus, Trash2 } from 'lucide-react';
+import { LoaderCircle, Pause, Play, Plus, Trash2 } from 'lucide-react';
 import { useApp } from '../../app/context';
 import { db } from '../../storage/db';
 import { startTimer, toggleTimer } from '../../storage/repository';
@@ -7,12 +7,14 @@ import { formatTime, timerRemaining } from '../../domain/rules';
 import { uid } from '../../domain/schema';
 import { useTimerClock } from './TimerClock';
 import { Sheet } from '../../shared/Sheet';
+import { ActionButton } from '../../shared/ActionButton';
 
 export function Timers({ onClose }: { onClose: () => void }) {
   const app = useApp();
   const time = useTimerClock(app.data.timers.some((t) => t.status === 'running'));
   const [name, setName] = useState('');
   const [minutes, setMinutes] = useState('5');
+  const [adding, setAdding] = useState(false);
   const sessionId = app.route.sessionId;
   return (
     <Sheet title="计时器" onClose={onClose}>
@@ -38,25 +40,23 @@ export function Timers({ onClose }: { onClose: () => void }) {
             </div>
             <b className="timer-digits">{formatTime(remaining)}</b>
             {timer.status !== 'done' && remaining > 0 && (
-              <button
+              <ActionButton
                 className="icon-button"
                 aria-label={`${timer.status === 'running' ? '暂停' : '继续'}${timer.name}`}
-                onClick={() => {
-                  void app.safe(() => toggleTimer(timer.id));
-                }}
+                pendingLabel=""
+                action={() => toggleTimer(timer.id)}
               >
                 {timer.status === 'running' ? <Pause size={18} /> : <Play size={18} />}
-              </button>
+              </ActionButton>
             )}
-            <button
+            <ActionButton
               className="icon-button muted"
               aria-label={`取消${timer.name}计时`}
-              onClick={() => {
-                void app.safe(() => db.timers.delete(timer.id));
-              }}
+              pendingLabel=""
+              action={() => db.timers.delete(timer.id)}
             >
               <Trash2 size={17} />
-            </button>
+            </ActionButton>
           </div>
         );
       })}
@@ -65,16 +65,20 @@ export function Timers({ onClose }: { onClose: () => void }) {
           className="timer-form"
           onSubmit={(e) => {
             e.preventDefault();
-            void app.safe(async () => {
-              await startTimer(
-                sessionId,
-                'custom',
-                uid(),
-                name.trim() || '自定义计时',
-                Math.round(Number(minutes) * 60),
-              );
-              setName('');
-            });
+            if (adding) return;
+            setAdding(true);
+            void app
+              .safe(async () => {
+                await startTimer(
+                  sessionId,
+                  'custom',
+                  uid(),
+                  name.trim() || '自定义计时',
+                  Math.round(Number(minutes) * 60),
+                );
+                setName('');
+              }, '计时已开始')
+              .finally(() => setAdding(false));
           }}
         >
           <h3>添加计时</h3>
@@ -100,9 +104,9 @@ export function Timers({ onClose }: { onClose: () => void }) {
               onChange={(e) => setMinutes(e.target.value)}
             />
           </label>
-          <button className="primary wide">
-            <Plus size={17} />
-            添加并开始
+          <button className="primary wide" disabled={adding} aria-busy={adding}>
+            {adding ? <LoaderCircle size={17} className="spin" /> : <Plus size={17} />}
+            {adding ? '正在启动…' : '添加并开始'}
           </button>
         </form>
       )}
