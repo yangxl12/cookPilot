@@ -28,6 +28,8 @@ export type AppContext = {
   data: Data;
   route: Route;
   busy: string | null;
+  composerHost: HTMLElement | null;
+  menuOpen: boolean;
   navigate: (route: Route) => Promise<void>;
   back: () => void;
   notify: (text: string, tone?: 'info' | 'success' | 'error') => void;

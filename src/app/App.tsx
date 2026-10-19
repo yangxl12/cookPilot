@@ -5,8 +5,11 @@ import { db, setSetting } from '../storage/db';
 import { cancelTask, createTask, initialize, pageOwner, pruneHistory } from '../storage/repository';
 import type { Task } from '../domain/schema';
 import { Home } from '../features/home/Home';
-import { HistorySheet, MenuSheet } from '../features/home/Navigation';
+import { HistorySheet } from '../features/home/Navigation';
+import { Drawer } from '../features/home/Drawer';
+import { useSideDrawer } from '../features/home/useSideDrawer';
 import { useAppData } from './data';
+import { useVisualViewport } from '../shared/useVisualViewport';
 import { TimerClock } from '../features/cooking/TimerClock';
 import { Timers } from '../features/cooking/Timers';
 import { ModelSwitch, PreferencesSheet, Settings } from '../features/settings/Settings';
@@ -48,12 +51,13 @@ export function App() {
     text: string;
     tone: 'info' | 'success' | 'error';
   } | null>(null);
-  const [sheet, setSheet] = useState<
-    'menu' | 'history' | 'models' | 'preferences' | 'timers' | null
-  >(null);
+  const [sheet, setSheet] = useState<'history' | 'models' | 'preferences' | 'timers' | null>(null);
+  const drawer = useSideDrawer(sheet !== null || route.page !== 'home');
+  const [composerHost, setComposerHost] = useState<HTMLDivElement | null>(null);
   const active = useRef<{ controller: AbortController; taskId?: string } | null>(null);
   const toastTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const data = useAppData();
+  useVisualViewport();
   const notify = useCallback((text: string, tone: 'info' | 'success' | 'error' = 'info') => {
     setToast({ text, tone });
     clearTimeout(toastTimeout.current);
@@ -84,6 +88,7 @@ export function App() {
   const navigate = useCallback(
     async (next: Route) => {
       await cancel();
+      drawer.hide();
       setSheet(null);
       if (next.sessionId) {
         try {
@@ -98,7 +103,7 @@ export function App() {
       setRoute(next);
       window.scrollTo(0, 0);
     },
-    [cancel],
+    [cancel, drawer.hide],
   );
   const back = useCallback(() => {
     if (history.state?.depth > 0) history.back();
@@ -170,6 +175,7 @@ export function App() {
       });
     const onRoute = () => {
       void cancel().catch(() => undefined);
+      drawer.hide();
       setSheet(null);
       setRoute(parseRoute());
       window.scrollTo(0, 0);
@@ -209,7 +215,7 @@ export function App() {
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('pageshow', onVisible);
     };
-  }, [cancel, notify]);
+  }, [cancel, drawer.hide, notify]);
   useEffect(() => {
     if (!ready || !('serviceWorker' in navigator) || import.meta.env.DEV) return;
     // Waiting workers are deliberately not activated while the user is cooking.
@@ -241,6 +247,8 @@ export function App() {
     data,
     route,
     busy,
+    composerHost,
+    menuOpen: drawer.open,
     safe,
     work,
     cancel,
@@ -251,32 +259,57 @@ export function App() {
     showModels: () => setSheet('models'),
     showPreferences: () => setSheet('preferences'),
     showHistory: () => setSheet('history'),
-    showMenu: () => setSheet('menu'),
+    showMenu: drawer.show,
   };
   return (
     <Context.Provider value={context}>
-      <div className="app">
-        <div id="app-content">
-          <PageBoundary key={route.page}>
-            <Suspense
-              fallback={
-                <div className="boot" role="status">
-                  <LoaderCircle className="spin" size={24} />
-                  正在打开…
-                </div>
-              }
-            >
-              {route.page === 'home' && <Home />}
-              {route.page === 'recipes' && <RecipePages key="catalog" />}
-              {route.page === 'ai-recipes' && <RecipePages key="ai" ai />}
-              {route.page === 'settings' && <Settings />}
-              {route.page === 'search' && <SearchPage />}
-              {route.page === 'cook' && <Cooking key={route.sessionId} />}{' '}
-            </Suspense>
-          </PageBoundary>
-          <TimerClock />
+      <div
+        className="app"
+        data-drawer={drawer.open ? 'open' : drawer.closing ? 'closing' : 'closed'}
+        ref={drawer.appRef}
+      >
+        <Drawer
+          open={drawer.open}
+          hidden={sheet !== null}
+          onClose={drawer.hide}
+          ref={drawer.drawerRef}
+        />
+        <div className="app-surface" inert={drawer.open}>
+          <div id="app-content">
+            <PageBoundary key={route.page}>
+              <Suspense
+                fallback={
+                  <div className="boot" role="status">
+                    <LoaderCircle className="spin" size={24} />
+                    正在打开…
+                  </div>
+                }
+              >
+                {route.page === 'home' && <Home />}
+                {route.page === 'recipes' && <RecipePages key="catalog" />}
+                {route.page === 'ai-recipes' && <RecipePages key="ai" ai />}
+                {route.page === 'settings' && <Settings />}
+                {route.page === 'search' && <SearchPage />}
+                {route.page === 'cook' && <Cooking key={route.sessionId} />}{' '}
+              </Suspense>
+            </PageBoundary>
+          </div>
         </div>
-        {sheet === 'menu' && <MenuSheet onClose={() => setSheet(null)} />}{' '}
+        <div
+          className="composer-host"
+          id="composer-host"
+          ref={setComposerHost}
+          inert={drawer.open}
+        />
+        <TimerClock />
+        {drawer.open && (
+          <button
+            className="drawer-scrim"
+            aria-label="收起菜单"
+            tabIndex={-1}
+            onClick={drawer.hide}
+          />
+        )}
         {sheet === 'history' && <HistorySheet onClose={() => setSheet(null)} />}{' '}
         {sheet === 'models' && <ModelSwitch onClose={() => setSheet(null)} />}{' '}
         {sheet === 'preferences' && <PreferencesSheet onClose={() => setSheet(null)} />}{' '}

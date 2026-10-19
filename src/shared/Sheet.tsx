@@ -6,12 +6,10 @@ export function Sheet({
   title,
   children,
   onClose,
-  drawer = false,
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
-  drawer?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const close = useRef(onClose);
@@ -20,8 +18,11 @@ export function Sheet({
     const previous = document.activeElement as HTMLElement | null;
     const element = ref.current;
     (element?.querySelector<HTMLElement>('[data-autofocus]') ?? element)?.focus();
-    const background = document.getElementById('app-content');
-    if (background) background.inert = true;
+    const backgrounds = [
+      document.getElementById('app-content'),
+      document.getElementById('composer-host'),
+    ].filter((node): node is HTMLElement => node !== null);
+    for (const node of backgrounds) node.inert = true;
     const overflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     const keydown = (event: KeyboardEvent) => {
@@ -53,14 +54,14 @@ export function Sheet({
     return () => {
       document.removeEventListener('keydown', keydown);
       document.body.style.overflow = overflow;
-      if (background) background.inert = false;
+      for (const node of backgrounds) node.inert = false;
       previous?.focus();
     };
   }, []);
   return createPortal(
-    <div className={`sheet-overlay ${drawer ? 'navigation-overlay' : ''}`} onClick={onClose}>
+    <div className="sheet-overlay" onClick={onClose}>
       <div
-        className={`sheet ${drawer ? 'navigation-drawer' : ''}`}
+        className="sheet"
         role="dialog"
         aria-modal="true"
         aria-label={title}
