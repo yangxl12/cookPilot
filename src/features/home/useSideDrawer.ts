@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-const EDGE = 28;
+// Android's back gesture owns the outermost ~24dp of the screen, so the drawer
+// swipe only arms a little further in and gets a wider catch band.
+const EDGE_FROM = 24;
+const EDGE_TO = 72;
 const LOCK_AT = 0.4;
 const FLICK = 0.32; // px per millisecond
 const SLOP = 6;
@@ -93,7 +96,10 @@ export function useSideDrawer(disabled = false) {
       const touch = event.touches[0];
       if (touch.clientX < rect.left || touch.clientX > rect.right) return;
       const opened = openRef.current;
-      if (!opened && touch.clientX - rect.left > EDGE) return;
+      if (!opened) {
+        const fromEdge = touch.clientX - rect.left;
+        if (fromEdge < EDGE_FROM || fromEdge > EDGE_TO) return;
+      }
       if (!width.current) measure();
       gesture.current = {
         id: touch.identifier,
