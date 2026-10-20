@@ -32,14 +32,9 @@ import { ActionButton } from '../../shared/ActionButton';
 export function UsageList({ content, uses }: { content: Content; uses: Usage[] }) {
   const actual = uses.filter((u) => u.fraction > 0);
   return actual.length ? (
-    <div className="step-usage">
-      <h3>本步用量</h3>
-      <div>
-        {actual.map((use) => (
-          <span key={use.ingredientId}>{ingredientAmount(content, use)}</span>
-        ))}
-      </div>
-    </div>
+    <p className="step-usage">
+      {actual.map((use) => ingredientAmount(content, use)).join(' · ')}
+    </p>
   ) : null;
 }
 function TimerAction({
@@ -62,14 +57,14 @@ function TimerAction({
   const duration = seconds >= 60 ? `${Math.round(seconds / 6) / 10} 分钟` : `${seconds} 秒`;
   return (
     <ActionButton
-      className={type === 'step' ? 'primary step-timer' : 'timer-button'}
+      className={type === 'step' ? 'step-timer' : 'timer-button'}
       pendingLabel="正在启动…"
       action={async () => {
         await startTimer(sessionId, type, id, title, seconds);
         app.showTimers();
       }}
     >
-      <TimerIcon size={type === 'step' ? 18 : 15} />
+      <TimerIcon size={15} />
       {existing
         ? `${existing.status === 'paused' ? '已暂停' : existing.status === 'done' ? '时间到' : '计时中'} · 查看计时`
         : `启动计时 · ${duration}`}
@@ -477,16 +472,6 @@ export function Cooking() {
   };
   const preparation = (
     <>
-      <div className="card-eyebrow">
-        开始之前
-        <button
-          className="version-chip"
-          aria-label="查看版本历史"
-          onClick={() => setSheet('versions')}
-        >
-          <Layers size={12} />v{version.number}
-        </button>
-      </div>
       <h1>准备好，再开火</h1>
       <section className="prep-section">
         <h2>要点</h2>
@@ -556,6 +541,13 @@ export function Cooking() {
       <div className="preparation-footer">
         <Clock3 size={14} />
         {content.minutes} 分钟 · {content.conditions}
+        <button
+          className="version-chip"
+          aria-label="查看版本历史"
+          onClick={() => setSheet('versions')}
+        >
+          <Layers size={12} />v{version.number}
+        </button>
       </div>
     </>
   );
@@ -602,19 +594,18 @@ export function Cooking() {
             preparation,
             ...content.steps.map((step, i) => (
               <div key={step.id}>
-                <div className="card-eyebrow">
-                  第 {i + 1} 步
-                  <span>
-                    {i + 1} / {content.steps.length}
+                <h1 className="step-title">
+                  <span className="step-index">
+                    {i + 1}/{content.steps.length}
                   </span>
-                </div>
-                <h1>{step.title}</h1>
-                {step.heat && (
-                  <div className="heat">
-                    <Flame size={16} />
-                    {step.heat}
-                  </div>
-                )}
+                  {step.title}
+                  {step.heat && (
+                    <span className="step-heat">
+                      <Flame size={13} />
+                      {step.heat}
+                    </span>
+                  )}
+                </h1>
                 <p className="step-action">{renderAction(content, step)}</p>
                 <UsageList content={content} uses={step.uses} />
                 {step.seconds > 0 && (
@@ -626,13 +617,15 @@ export function Cooking() {
                     seconds={step.seconds}
                   />
                 )}
-                <div className="completion-signal">
-                  <h3>
-                    <Check size={17} />
-                    完成信号
-                  </h3>
-                  <p>{step.signal}</p>
-                </div>
+                {step.signal && (
+                  <div className="completion-signal">
+                    <h3>
+                      <Check size={13} />
+                      完成信号
+                    </h3>
+                    <p>{step.signal}</p>
+                  </div>
+                )}
                 {step.tip && (
                   <div className="step-tip">
                     <h3>留意</h3>
