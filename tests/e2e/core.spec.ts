@@ -301,6 +301,58 @@ test('问答分离；备菜阶段；确认进度不依赖翻卡', async ({ page 
   await page.getByRole('button', { name: '确认这些进度' }).click();
   await expect(page.getByText('实际进度已确认', { exact: false })).toBeVisible();
 });
+test('制作问答默认联网，关掉开关后不再检索', async ({ page }) => {
+  let searches = 0;
+  let prompts: string[] = [];
+  await page.route('https://api.deepseek.com/**', async (route) => {
+    const url = route.request().url();
+    if (url.endsWith('/v1/tools/search')) {
+      searches++;
+      return route.fulfill({
+        json: {
+          results: [
+            {
+              title: '生抽对比',
+              url: 'https://a.example/1',
+              summary: '金标生抽氨基酸态氮更高。',
+              rerank_score: 2.2,
+            },
+          ],
+        },
+      });
+    }
+    if (!(route.request().postDataJSON().messages?.[0]?.content ?? '').includes('当前制作问答'))
+      return route.fallback();
+    prompts.push(route.request().postDataJSON().messages[0].content);
+    await route.fulfill({
+      json: {
+        choices: [
+          {
+            finish_reason: 'stop',
+            message: {
+              content: JSON.stringify({ text: '换金标也行。', confirmations: [], proposal: null }),
+            },
+          },
+        ],
+      },
+    });
+  });
+  await generate(page);
+  searches = 0; // 生成阶段的检索单独计，这里只关心问答
+  await page.getByRole('button', { name: '问问 AI', exact: true }).click();
+  await page.getByRole('textbox', { name: '烹饪问题' }).fill('金标生抽咸不咸');
+  await page.getByRole('button', { name: '发送烹饪问题' }).click();
+  await expect(page.getByText('换金标也行。')).toBeVisible();
+  expect(searches).toBe(1);
+  expect(prompts[0]).toContain('金标生抽氨基酸态氮更高');
+  prompts = [];
+  await page.getByRole('button', { name: '关闭联网查找' }).click();
+  await page.getByRole('textbox', { name: '烹饪问题' }).fill('还可以再放盐吗');
+  await page.getByRole('button', { name: '发送烹饪问题' }).click();
+  await expect(page.getByText('换金标也行。')).toHaveCount(2);
+  expect(searches).toBe(1);
+  expect(prompts[0]).not.toContain('网络参考');
+});
 test('认证失败不伪装成功，保留输入与候选', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('button', { name: 'DeepSeek Flash' })).toBeVisible();

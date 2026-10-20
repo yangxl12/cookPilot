@@ -1359,6 +1359,16 @@ svg {
   height: 42px;
   min-height: 42px;
 }
+.question-composer .web-toggle {
+  border: 1px solid var(--line);
+  background: var(--soft);
+  color: var(--muted);
+  border-radius: var(--radius-control);
+}
+.question-composer .web-toggle[aria-pressed='true'] {
+  border-color: var(--brand);
+  color: var(--brand);
+}
 .proposal {
   margin-top: 14px;
   border: 1px solid #d6e4db;

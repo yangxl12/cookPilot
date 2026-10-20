@@ -104,7 +104,31 @@ it('用户取消时抛出取消错误而不是假装没有参考', async () => {
 
 it('参考块为空时不污染提示词', () => {
   expect(referenceBlock([])).toBe('');
-  const block = referenceBlock([{ title: 'A', url: 'https://a.example', summary: '做法一' }]);
+  const block = referenceBlock([
+    { title: 'A', url: 'https://a.example', summary: '做法一', score: 2 },
+  ]);
   expect(block).toContain('1. A：做法一');
   expect(block).toContain('不要把网址写进输出');
+});
+
+it('按 rerank 分数丢弃弱相关，未知分数不过滤', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockImplementation(async () =>
+      payload([
+        { title: '相关', url: 'https://a.example/1', summary: '正文', rerank_score: 2.4 },
+        { title: '边缘', url: 'https://b.example/2', summary: '正文', rerank_score: 0.8 },
+        { title: '未知', url: 'https://c.example/3', summary: '正文' },
+      ]),
+    ),
+  );
+  const all = await search(model, '宫保鸡丁');
+  expect(all.map((r) => [r.title, r.score])).toEqual([
+    ['相关', 2.4],
+    ['边缘', 0.8],
+    ['未知', -1],
+  ]);
+  const strong = await search(model, '宫保鸡丁', { minScore: 1.5, maxChars: 2 });
+  expect(strong.map((r) => r.title)).toEqual(['相关', '未知']);
+  expect(strong[0].summary).toBe('正文');
 });

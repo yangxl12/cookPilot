@@ -267,6 +267,7 @@ export async function askCooking(
     strict: boolean;
   },
   signal: AbortSignal,
+  references: Reference[] = [],
 ) {
   const { content, session } = context;
   const stage =
@@ -285,7 +286,7 @@ export async function askCooking(
 已知进度且可以安全调整时，proposal 为 {"explanation":"变更原因与影响","steps":[仅替换受影响的原有完整步骤对象],"prep":[仅替换受影响的原有完整备菜对象],"ingredients":[需要变更的原有完整食材对象]}。
 保留所有稳定 ID；禁止改已执行内容；禁止改已用食材的总用量；禁止新增食材或增删步骤。仅调整尚未执行的相关操作。没有修改则proposal=null。
 严格用量规则：${contentRules}
-当前阶段：${stage}。实际已确认执行记录：${JSON.stringify(session.execution)}。是否已明确确认进度：${JSON.stringify(session.progressKnown ?? false)}。
+${references.length ? `${referenceBlock(references, '仅用于回答品牌、设备、营养等菜谱之外的事实性问题；不得据此修改当前菜谱的做法、用量或步骤')}\n` : ''}当前阶段：${stage}。实际已确认执行记录：${JSON.stringify(session.execution)}。是否已明确确认进度：${JSON.stringify(session.progressKnown ?? false)}。
 当前版本内容：${JSON.stringify(content)}。通用偏好：${JSON.stringify(context.preferences)}。计时状态：${JSON.stringify(context.timers.map((t) => ({ name: t.name, status: t.status, deadline: t.deadline, remaining: t.remaining })))}。
 相关问答：${JSON.stringify(context.messages.slice(-10).map((m) => ({ role: m.role, text: m.text })))}。`,
       },

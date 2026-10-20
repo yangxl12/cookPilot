@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { chat, parseJson } from '../../src/services/ai/client';
-import { generate, recommend, contentExample } from '../../src/services/ai/cooking';
-import { defaultPreferences, difficultySchema } from '../../src/domain/schema';
+import { generate, recommend, contentExample, askCooking } from '../../src/services/ai/cooking';
+import { defaultPreferences, difficultySchema, type CookingSession } from '../../src/domain/schema';
 import { renderAction, validateContent, validateRequestedAmounts } from '../../src/domain/rules';
 import realContent from '../fixtures/deepseek-flash-guide.json';
 import realRecommendation from '../fixtures/deepseek-flash-recommendation.json';
@@ -205,7 +205,7 @@ it('生成时把联网参考放在提问里，重试仍保留且不泄露 Key', 
   const fetcher = vi.fn().mockResolvedValue(result(JSON.stringify(contentExample)));
   vi.stubGlobal('fetch', fetcher);
   await generate(model, candidate, '', defaultPreferences(), new AbortController().signal, '', [
-    { title: '家常番茄炒蛋', url: 'https://example.com/a', summary: '鸡蛋先炒后盛出。' },
+    { title: '家常番茄炒蛋', url: 'https://example.com/a', summary: '鸡蛋先炒后盛出。', score: 2 },
   ]);
   const request = JSON.parse(fetcher.mock.calls[0][1].body);
   const user = request.messages.find((m: { role: string }) => m.role === 'user').content;
@@ -213,6 +213,60 @@ it('生成时把联网参考放在提问里，重试仍保留且不泄露 Key', 
   expect(user).toContain('家常番茄炒蛋：鸡蛋先炒后盛出。');
   expect(user).not.toContain('example.com/a');
   expect(user).not.toContain(model.key);
+});
+const session: CookingSession = {
+  id: 'session',
+  recipeId: 'recipe',
+  versionId: 'version',
+  checked: [],
+  currentCard: 0,
+  execution: [],
+  progressKnown: false,
+  revision: 0,
+  note: '',
+  createdAt: 0,
+};
+const askContext = {
+  content: contentExample,
+  session,
+  messages: [],
+  timers: [],
+  preferences: defaultPreferences(),
+  strict: true,
+};
+const answer = () =>
+  result(JSON.stringify({ text: '可以换', confirmations: [], proposal: null }));
+it('制作问答只把强相关参考写进提示词，并禁止据此改菜谱', async () => {
+  const fetcher = vi.fn().mockImplementation(async () => answer());
+  vi.stubGlobal('fetch', fetcher);
+  await askCooking(
+    model,
+    '海天金标生抽和普通生抽有什么区别',
+    askContext,
+    new AbortController().signal,
+    [
+      {
+        title: '生抽对比',
+        url: 'https://a.example/1',
+        summary: '金标生抽氨基酸态氮更高，更鲜。',
+        score: 2.1,
+      },
+    ],
+  );
+  const system = JSON.parse(fetcher.mock.calls[0][1].body).messages[0].content;
+  expect(system).toContain('网络参考');
+  expect(system).toContain('金标生抽氨基酸态氮更高');
+  expect(system).toContain('不得据此修改当前菜谱');
+  expect(system).not.toContain('a.example/1');
+  expect(system).not.toContain(model.key);
+});
+it('没有参考时提示词保持原样', async () => {
+  const fetcher = vi.fn().mockImplementation(async () => answer());
+  vi.stubGlobal('fetch', fetcher);
+  await askCooking(model, '现在可以下锅了吗', askContext, new AbortController().signal);
+  const system = JSON.parse(fetcher.mock.calls[0][1].body).messages[0].content;
+  expect(system).not.toContain('网络参考');
+  expect(system).toContain('职责：当前制作问答');
 });
 it('完整引用和零比例的处理操作保持原样，定性用量也可补齐', async () => {
   const qualitative = structuredClone(contentExample);

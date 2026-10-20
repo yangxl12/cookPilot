@@ -1,12 +1,17 @@
 import type { ModelSnapshot } from './client';
 import { isDeepSeek, searchEndpoint } from './providers';
 
-/** One web page the model may consult before writing a guide. */
-export type Reference = { title: string; url: string; summary: string };
+/** One web page the model may consult. score is DeepSeek's rerank value: 0~3, -1 when unknown. */
+export type Reference = { title: string; url: string; summary: string; score: number };
 
 // Only the official endpoint documents a tools API; compatible third-party services do not.
 export function canSearch(snapshot: ModelSnapshot): boolean {
   return isDeepSeek(snapshot.url) && Boolean(snapshot.key.trim());
+}
+
+/** UI-side check: does this provider have a search API at all? Key presence is checked later. */
+export function supportsSearch(url: string): boolean {
+  return isDeepSeek(url);
 }
 
 // DeepSeek returns Markdown summaries that open with headings and filler; strip the syntax so
@@ -28,16 +33,24 @@ const limit = (value: unknown, max = 600) => {
 };
 
 /**
- * Search is an optional aid: any failure returns no references so the guide still generates.
+ * Search is an optional aid: any failure returns no references so the request still completes.
  * Aborting is the only error that propagates, because the user asked to stop.
  * https://api-docs.deepseek.com/zh-cn/guides/search/
  */
 export async function search(
   snapshot: ModelSnapshot,
   query: string,
-  options: { signal?: AbortSignal; count?: number; timeoutMs?: number } = {},
+  options: {
+    signal?: AbortSignal;
+    count?: number;
+    timeoutMs?: number;
+    /** Drop weak matches; unknown scores never filter. Rerank ≥ 1.5 is documented as good. */
+    minScore?: number;
+    maxChars?: number;
+  } = {},
 ): Promise<Reference[]> {
   if (!canSearch(snapshot) || !query.trim()) return [];
+  const maxChars = options.maxChars ?? 600;
   const controller = new AbortController();
   const abort = () => controller.abort(options.signal?.reason);
   options.signal?.addEventListener('abort', abort, { once: true });
@@ -71,9 +84,12 @@ export async function search(
     return results.flatMap((item: Record<string, unknown>) => {
       const url = typeof item?.url === 'string' ? item.url.trim() : '';
       if (!/^https?:\/\//i.test(url)) return [];
-      const summary = limit(item.summary) || limit(item.snippet);
+      const raw = item.rerank_score;
+      const score = typeof raw === 'number' && Number.isFinite(raw) ? raw : -1;
+      if (score >= 0 && score < (options.minScore ?? 0)) return [];
+      const summary = limit(item.summary, maxChars) || limit(item.snippet, maxChars);
       if (!summary) return [];
-      return [{ title: limit(item.title) || url, url, summary }];
+      return [{ title: limit(item.title) || url, url, summary, score }];
     });
   } catch {
     if (!timeout && controller.signal.aborted) throw new DOMException('请求已取消', 'AbortError');
@@ -85,8 +101,11 @@ export async function search(
 }
 
 /** Compact prompt block. Empty when there is nothing to cite. */
-export function referenceBlock(references: Reference[]): string {
+export function referenceBlock(
+  references: Reference[],
+  note = '仅用于核对做法、用量和关键点；与用户要求冲突时以用户要求为准',
+): string {
   if (!references.length) return '';
-  return `网络参考（仅用于核对做法、用量和关键点；与用户要求冲突时以用户要求为准；不要把网址写进输出）：
+  return `网络参考（${note}；不要把网址写进输出）：
 ${references.map((reference, index) => `${index + 1}. ${reference.title}：${reference.summary}`).join('\n')}`;
 }

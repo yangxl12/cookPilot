@@ -5,6 +5,7 @@ import {
   Check,
   Clock3,
   Flame,
+  Globe,
   Layers,
   List,
   LoaderCircle,
@@ -25,6 +26,7 @@ import {
   type Usage,
 } from '../../domain/schema';
 import { askCooking } from '../../services/ai/cooking';
+import { search, supportsSearch } from '../../services/ai/search';
 import { Sheet } from '../../shared/Sheet';
 import { Carousel } from './Carousel';
 import { ActionButton } from '../../shared/ActionButton';
@@ -32,9 +34,7 @@ import { ActionButton } from '../../shared/ActionButton';
 export function UsageList({ content, uses }: { content: Content; uses: Usage[] }) {
   const actual = uses.filter((u) => u.fraction > 0);
   return actual.length ? (
-    <p className="step-usage">
-      {actual.map((use) => ingredientAmount(content, use)).join(' · ')}
-    </p>
+    <p className="step-usage">{actual.map((use) => ingredientAmount(content, use)).join(' · ')}</p>
   ) : null;
 }
 function TimerAction({
@@ -129,6 +129,13 @@ function Questions({
   const app = useApp();
   const [question, setQuestion] = useState('');
   const [progressEditor, setProgressEditor] = useState(false);
+  // 灶台边多数问题菜谱里就有答案，联网是可选件：默认开启，关掉后记住选择。
+  const [webSearch, setWebSearch] = useState(
+    () => localStorage.getItem('cookpilot-question-search') !== 'off',
+  );
+  const activeModel =
+    app.data.models.find((m) => m.id === app.data.activeModelId) ?? app.data.models[0];
+  const searchable = !!activeModel && supportsSearch(activeModel.url);
   const [selected, setSelected] = useState(
     session.execution.map((e) => `${e.targetType}:${e.targetId}`),
   );
@@ -164,6 +171,12 @@ function Questions({
             .filter(Boolean)
             .join('、'),
         };
+        // 只注入与问题强相关的网页；分数太低（多为泛泛而谈）就让模型用菜谱自身作答。
+        const references =
+          webSearch && searchable
+            ? await search(model, text, { signal, count: 3, minScore: 1.15, maxChars: 400 })
+            : [];
+        if (!valid()) return;
         const answer = await askCooking(
           model,
           text,
@@ -181,6 +194,7 @@ function Questions({
               !currentVersion.id.startsWith('legacy-'),
           },
           signal,
+          references,
         );
         if (!valid()) return;
         await commitCookingMessage(task.id, {
@@ -363,6 +377,22 @@ function Questions({
           maxLength={2000}
           disabled={!!app.busy}
         />
+        {searchable && (
+          <button
+            type="button"
+            className="web-toggle"
+            aria-label={webSearch ? '关闭联网查找' : '开启联网查找'}
+            aria-pressed={webSearch}
+            disabled={!!app.busy}
+            onClick={() => {
+              const next = !webSearch;
+              setWebSearch(next);
+              localStorage.setItem('cookpilot-question-search', next ? 'on' : 'off');
+            }}
+          >
+            <Globe size={17} />
+          </button>
+        )}
         <button
           className="primary"
           aria-label="发送烹饪问题"
