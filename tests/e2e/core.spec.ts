@@ -467,7 +467,7 @@ test('全局搜索可命中心得与后续对话；历史可恢复', async ({ pa
   await expect(page.getByRole('heading', { name: '全局搜索', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '返回', exact: true }).click();
   await page.getByRole('button', { name: '打开菜单' }).click();
-  await page.getByRole('button', { name: '对话历史', exact: true }).click();
+  await page.getByRole('button', { name: '全部' }).click();
   await page.getByRole('button', { name: /番茄400g和鸡蛋3个/ }).click();
   await expect(page.getByRole('button', { name: '使用已有菜谱' })).toBeVisible();
 });

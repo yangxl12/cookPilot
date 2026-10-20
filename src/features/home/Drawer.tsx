@@ -1,15 +1,6 @@
 import { useEffect, type Ref } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import {
-  BookOpen,
-  ChefHat,
-  ChevronRight,
-  History,
-  MessageSquarePlus,
-  Search,
-  Settings2,
-  X,
-} from 'lucide-react';
+import { BookOpen, ChefHat, ChevronRight, Search, Settings2, X } from 'lucide-react';
 import { useApp } from '../../app/context';
 import { db, setSetting } from '../../storage/db';
 import { isExpired } from '../../domain/rules';
@@ -57,12 +48,6 @@ function DrawerBody({ onClose }: { onClose: () => void }) {
     onClose();
     void app.navigate({ page });
   };
-  const start = () =>
-    void app.safe(async () => {
-      await app.cancel();
-      await setSetting('activeConversationId', null);
-      onClose();
-    }, '已新建对话');
   const resume = (id: string) =>
     void app.safe(async () => {
       await app.cancel();
@@ -88,10 +73,6 @@ function DrawerBody({ onClose }: { onClose: () => void }) {
       <button className="menu-search" onClick={() => go('search')}>
         <Search size={17} />
         搜索菜谱、心得与对话
-      </button>
-      <button className="drawer-new" onClick={start}>
-        <MessageSquarePlus size={18} />
-        新建对话
       </button>
       <div className="drawer-scroll">
         <div className="drawer-label">
@@ -137,13 +118,7 @@ function DrawerBody({ onClose }: { onClose: () => void }) {
             <ChevronRight size={15} />
           </button>
         ))}
-        <button onClick={history}>
-          <History size={20} strokeWidth={1.6} />
-          对话历史
-          <ChevronRight size={15} />
-        </button>
       </nav>
-      <p className="drawer-foot">本机保存 · 离线可用</p>
     </>
   );
 }

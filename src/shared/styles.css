@@ -1218,23 +1218,6 @@ svg {
   padding: 10px 10px 16px;
   line-height: 1.7;
 }
-.drawer-new {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  width: 100%;
-  min-height: 44px;
-  border-radius: var(--radius-control);
-  background: var(--brand);
-  color: #fff;
-  font-size: 14px;
-  font-weight: 600;
-  margin-bottom: 4px;
-}
-.drawer-new:hover {
-  background: var(--brand-deep);
-}
 .drawer-scrim {
   position: fixed;
   top: 0;
@@ -1245,11 +1228,6 @@ svg {
   padding: 0;
   background: transparent;
   touch-action: none;
-}
-.drawer-foot {
-  font-size: 10.5px;
-  color: #93a099;
-  padding: 12px 4px 2px;
 }
 .menu-search {
   display: flex;
@@ -2552,10 +2530,6 @@ html[data-scrolled='true'] {
   color: var(--muted);
   opacity: 0.6;
 }
-.drawer-foot {
-  color: var(--muted);
-  opacity: 0.75;
-}
 .drawer-label,
 .drawer-empty {
   color: var(--muted);
@@ -2597,8 +2571,7 @@ button {
     opacity 160ms var(--ease),
     transform 340ms var(--spring);
 }
-.primary,
-.drawer-new {
+.primary {
   background-color: var(--brand);
   background-image:
     linear-gradient(105deg, transparent 36%, rgba(255, 255, 255, 0.3) 46%, transparent 56%),
@@ -2613,8 +2586,7 @@ button {
   border-radius: var(--radius-control);
 }
 @media (hover: hover) {
-  .primary:hover:not(:disabled),
-  .drawer-new:hover {
+  .primary:hover:not(:disabled) {
     background-image:
       linear-gradient(105deg, transparent 36%, rgba(255, 255, 255, 0.3) 46%, transparent 56%),
       var(--brand-fill);
