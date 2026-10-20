@@ -158,6 +158,22 @@ export function App() {
     }
   };
   useEffect(() => {
+    const root = document.documentElement;
+    let scrolled = false;
+    const sync = () => {
+      const next = window.scrollY > 8;
+      if (next === scrolled) return;
+      scrolled = next;
+      root.dataset.scrolled = next ? 'true' : 'false';
+    };
+    sync();
+    window.addEventListener('scroll', sync, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', sync);
+      delete root.dataset.scrolled;
+    };
+  }, []);
+  useEffect(() => {
     let alive = true;
     void initialize()
       .then(migrateLegacy)
