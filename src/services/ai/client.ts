@@ -61,18 +61,29 @@ export async function chat(
     if (options.json) body.response_format = { type: 'json_object' };
     // DeepSeek defaults to thinking; disable it to keep interactive requests small.
     if (isDeepSeek(snapshot.url)) body.thinking = { type: 'disabled' };
-    const response = await fetch(endpoint(snapshot.url), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(snapshot.key ? { Authorization: `Bearer ${snapshot.key}` } : {}),
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-      cache: 'no-store',
-      credentials: 'omit',
-      redirect: 'error',
-    });
+    const send = () =>
+      fetch(endpoint(snapshot.url), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(snapshot.key ? { Authorization: `Bearer ${snapshot.key}` } : {}),
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+        cache: 'no-store',
+        credentials: 'omit',
+        redirect: 'error',
+      });
+    let response: Response;
+    try {
+      response = await send();
+    } catch (error) {
+      // A dropped connection often succeeds on a second try. Timeouts and cancellations never repeat.
+      if (timeout || controller.signal.aborted) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      if (timeout || controller.signal.aborted) throw error;
+      response = await send();
+    }
     if (!response.ok) {
       const explanation: Record<number, string> = {
         400: '请求参数或模型名称不受支持，请检查配置',
@@ -104,7 +115,11 @@ export async function chat(
     if (timeout) throw new ModelError('请求超时，未自动重试；上游可能已产生用量，请稍后重试');
     if (controller.signal.aborted) throw new DOMException('请求已取消', 'AbortError');
     if (error instanceof ModelError) throw error;
-    throw new ModelError('无法连接模型。请检查网络、接口地址和浏览器跨域支持');
+    if (typeof navigator !== 'undefined' && navigator.onLine === false)
+      throw new ModelError('设备已断网，恢复网络后重试');
+    throw new ModelError(
+      `连接 ${service.host} 失败。请检查网络或代理能否访问该地址；跨域被拦截时也会如此`,
+    );
   } finally {
     clearTimeout(handle);
     options.signal?.removeEventListener('abort', abort);

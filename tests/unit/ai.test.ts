@@ -99,6 +99,23 @@ it('认证错误与服务错误不自动重试，不回显包含凭据的上游�
   await expect(chat(model, [{ role: 'user', content: '连接' }])).rejects.toThrow('API Key 无效');
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
+it('连接中断重试一次即成功，不把瞬时断网报成失败', async () => {
+  const fetcher = vi
+    .fn()
+    .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    .mockResolvedValueOnce(result('已恢复'));
+  vi.stubGlobal('fetch', fetcher);
+  await expect(chat(model, [{ role: 'user', content: '连接' }])).resolves.toBe('已恢复');
+  expect(fetcher).toHaveBeenCalledTimes(2);
+});
+it('连续两次连不上时给出具体域名，便于判断网络还是跨域问题', async () => {
+  const fetcher = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+  vi.stubGlobal('fetch', fetcher);
+  await expect(chat(model, [{ role: 'user', content: '连接' }])).rejects.toThrow(
+    '连接 api.deepseek.com 失败',
+  );
+  expect(fetcher).toHaveBeenCalledTimes(2);
+});
 it('空响应与截断内容不伪装成功', async () => {
   const fetcher = vi
     .fn()
