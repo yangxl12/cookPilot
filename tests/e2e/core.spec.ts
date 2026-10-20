@@ -139,7 +139,8 @@ test('备菜依赖和重复提及的食材在本地修复，保存刷新后仍�
 });
 
 test('字段和用量错误连续修复后自动保存，复用时不再生成', async ({ page }) => {
-  const wrongSchema = { ...contentExample, cuisine: '未知' };
+  // 菜系与分组现在会自动归一，这里用一个真实的字段缺失来触发修复回合。
+  const wrongSchema = { ...contentExample, cookware: [] };
   const wrongAmounts = structuredClone(contentExample);
   wrongAmounts.steps[1].uses[0].fraction = 1;
   const responses = [wrongSchema, wrongAmounts, contentExample];

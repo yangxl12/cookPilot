@@ -100,6 +100,7 @@ export const contentExample: Content = {
   ],
 };
 const contentRules = `完整指南按此 JSON schema 示例输出，字段必须完整：${JSON.stringify(contentExample)}。
+cuisine 只能填「中式」或「西式与日式」，不要写川菜、粤菜、日料这类具体菜系；ingredients[].group 只能填「主料」或「调味」，辅料、腌料、酱料、香料一律填「调味」。
 食材 id、备菜 id、步骤 id 各自唯一且只用英文字母数字下划线连字符。
 数字食材用量只存 ingredients.quantity+unit；不确定用量 quantity=null，amountText="适量（具体判断依据）"。
 prep/steps.uses 中 fraction 是本操作实际使用该食材总量的比例；只处理、观察或引用先前准备好的材料用 fraction=0。

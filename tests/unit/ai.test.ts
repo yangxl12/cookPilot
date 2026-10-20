@@ -234,8 +234,7 @@ const askContext = {
   preferences: defaultPreferences(),
   strict: true,
 };
-const answer = () =>
-  result(JSON.stringify({ text: '可以换', confirmations: [], proposal: null }));
+const answer = () => result(JSON.stringify({ text: '可以换', confirmations: [], proposal: null }));
 it('制作问答只把强相关参考写进提示词，并禁止据此改菜谱', async () => {
   const fetcher = vi.fn().mockImplementation(async () => answer());
   vi.stubGlobal('fetch', fetcher);
@@ -416,9 +415,10 @@ it('真实红烧肉的重复分配反馈具体数值和位置，连续修复后�
   expect(content.ingredients).toEqual(schemaFixed.ingredients);
   expect(validateContent(content)).toEqual(content);
   expect(fetcher).toHaveBeenCalledTimes(3);
-  expect(JSON.parse(fetcher.mock.calls[1][1].body).messages.at(-1).content).toContain(
-    '只能为 主料 / 调味',
-  );
+  // group 写成「其他」不再触发额外一轮重生成，只剩真正的用量分配问题需要修复。
+  const firstRepair = JSON.parse(fetcher.mock.calls[1][1].body).messages.at(-1).content;
+  expect(firstRepair).toContain('用量分配之和不等于 1');
+  expect(firstRepair).not.toContain('只能为 主料 / 调味');
   expect(JSON.parse(fetcher.mock.calls[2][1].body).messages.at(-1).content).toContain(
     'aromatics=0.5',
   );

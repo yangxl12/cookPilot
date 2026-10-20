@@ -21,13 +21,47 @@ export const difficultySchema = z.preprocess(
   z.enum(['简单', '适中', '有点挑战']),
 );
 export const usageSchema = z.object({ ingredientId: id, fraction: z.number().min(0).max(1) });
+// 模型会写「川菜」「西餐」「日料」这类更细的菜系：归一到两个分类，别为格式细节整份重生成。
+export const cuisineSchema = z.preprocess(
+  (value) => {
+    if (typeof value !== 'string') return value;
+    const clean = value.trim();
+    if (clean === '中式' || clean === '西式与日式') return clean;
+    return /西|日|法|意|欧|美式|韩|泰|东南亚|融合/.test(clean) ? '西式与日式' : '中式';
+  },
+  z.enum(['中式', '西式与日式']),
+);
+// 同理，「辅料」「腌料」「酱料」都属于「调味」。
+const groupAlias: Record<string, '主料' | '调味'> = {
+  主料: '主料',
+  主材: '主料',
+  主要食材: '主料',
+  食材: '主料',
+  调味: '调味',
+  调料: '调味',
+  辅料: '调味',
+  配料: '调味',
+  佐料: '调味',
+  腌料: '调味',
+  酱料: '调味',
+  香料: '调味',
+  蘸料: '调味',
+};
+export const groupSchema = z.preprocess(
+  (value) => {
+    if (typeof value !== 'string') return value;
+    const clean = value.trim();
+    return groupAlias[clean] ?? (/调|辅|佐|腌|酱|香料|蘸/.test(clean) ? '调味' : '主料');
+  },
+  z.enum(['主料', '调味']),
+);
 export const ingredientSchema = z.object({
   id,
   name: text,
   quantity: z.number().positive().max(100000).nullable(),
   unit: z.string().max(30),
   amountText: z.string().max(150).default(''),
-  group: z.enum(['主料', '调味']),
+  group: groupSchema,
   note: z.string().max(500).default(''),
 });
 export const prepSchema = z.object({
@@ -53,7 +87,7 @@ export const contentSchema = z.object({
   schemaVersion: z.literal(1),
   title: text,
   aliases: z.array(z.string().min(1).max(100)).max(15).default([]),
-  cuisine: z.enum(['中式', '西式与日式']),
+  cuisine: cuisineSchema,
   minutes: z.number().int().positive().max(2880),
   difficulty: difficultySchema,
   conditions: text,
