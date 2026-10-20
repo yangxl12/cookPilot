@@ -53,7 +53,7 @@ export function TimerClock() {
           if (completed && mounted.current) notify(`${timer.name} 时间到，请观察食材状态`);
         })
         .catch(() => {
-          if (mounted.current) notify('计时状态保存失败，请重试');
+          if (mounted.current) notify('计时状态保存失败，请重试', 'error');
         });
     }
   }, [data.timers, time, notify]);

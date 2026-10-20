@@ -1875,6 +1875,41 @@ svg {
   overflow-wrap: anywhere;
   pointer-events: none;
 }
+/* 轻提示：只留一行淡字，不抢注意力 */
+.toast-soft {
+  position: fixed;
+  z-index: 200;
+  left: 50%;
+  top: calc(80px + env(safe-area-inset-top));
+  transform: translateX(-50%);
+  max-width: min(84%, 360px);
+  padding: 6px 14px;
+  border-radius: 16px;
+  background: rgba(255, 252, 248, 0.78);
+  border: 1px solid var(--hairline);
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.65;
+  text-align: center;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+  backdrop-filter: blur(14px) saturate(150%);
+  animation: toast-soft-in 200ms var(--ease);
+}
+@keyframes toast-soft-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -4px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
 .toast-error {
   background: #873b32f5;
 }
@@ -2314,7 +2349,9 @@ html[data-scrolled='true'] {
   color: var(--brand-deep);
 }
 .catalog-row > svg {
-  transition: transform 320ms var(--spring), color 160ms var(--ease);
+  transition:
+    transform 320ms var(--spring),
+    color 160ms var(--ease);
   color: var(--muted);
 }
 .catalog-row:hover > svg {
@@ -2576,8 +2613,12 @@ button {
   background-image:
     linear-gradient(105deg, transparent 36%, rgba(255, 255, 255, 0.3) 46%, transparent 56%),
     var(--brand-fill);
-  background-size: 240% 100%, 100% 100%;
-  background-position: 130% 0, 0 0;
+  background-size:
+    240% 100%,
+    100% 100%;
+  background-position:
+    130% 0,
+    0 0;
   background-repeat: no-repeat;
   box-shadow:
     0 10px 24px -12px rgba(151, 57, 10, 0.8),
@@ -2590,8 +2631,12 @@ button {
     background-image:
       linear-gradient(105deg, transparent 36%, rgba(255, 255, 255, 0.3) 46%, transparent 56%),
       var(--brand-fill);
-    background-size: 240% 100%, 100% 100%;
-    background-position: -30% 0, 0 0;
+    background-size:
+      240% 100%,
+      100% 100%;
+    background-position:
+      -30% 0,
+      0 0;
     background-repeat: no-repeat;
     filter: brightness(1.03);
   }
@@ -2850,6 +2895,11 @@ button {
   }
   .toast {
     border-color: rgba(255, 255, 255, 0.1);
+  }
+  .toast-soft {
+    background: rgba(40, 30, 25, 0.72);
+    border-color: rgba(255, 255, 255, 0.1);
+    color: rgba(246, 235, 226, 0.8);
   }
 }
 

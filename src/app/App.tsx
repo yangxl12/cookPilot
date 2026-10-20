@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { CheckCircle2, CircleAlert, Info, LoaderCircle, X } from 'lucide-react';
+import { CircleAlert, LoaderCircle, X } from 'lucide-react';
 import { Context, type AppContext, type Route, type Work } from './context';
 import { db, setSetting } from '../storage/db';
 import { cancelTask, createTask, initialize, pageOwner, pruneHistory } from '../storage/repository';
@@ -61,7 +61,7 @@ export function App() {
   const notify = useCallback((text: string, tone: 'info' | 'success' | 'error' = 'info') => {
     setToast({ text, tone });
     clearTimeout(toastTimeout.current);
-    toastTimeout.current = setTimeout(() => setToast(null), tone === 'error' ? 9000 : 4000);
+    toastTimeout.current = setTimeout(() => setToast(null), tone === 'error' ? 9000 : 2200);
   }, []);
   const safe: AppContext['safe'] = useCallback(
     async (operation, success) => {
@@ -330,24 +330,20 @@ export function App() {
         {sheet === 'models' && <ModelSwitch onClose={() => setSheet(null)} />}{' '}
         {sheet === 'preferences' && <PreferencesSheet onClose={() => setSheet(null)} />}{' '}
         {sheet === 'timers' && <Timers onClose={() => setSheet(null)} />}{' '}
-        {toast && (
-          <div
-            className={`toast toast-${toast.tone}`}
-            role={toast.tone === 'error' ? 'alert' : 'status'}
-          >
-            {toast.tone === 'success' ? (
-              <CheckCircle2 size={19} aria-hidden="true" />
-            ) : toast.tone === 'error' ? (
+        {toast &&
+          (toast.tone === 'error' ? (
+            <div className="toast toast-error" role="alert">
               <CircleAlert size={19} aria-hidden="true" />
-            ) : (
-              <Info size={19} aria-hidden="true" />
-            )}
-            <span>{toast.text}</span>
-            <button className="icon-button" aria-label="关闭提示" onClick={() => setToast(null)}>
-              <X size={16} />
-            </button>
-          </div>
-        )}
+              <span>{toast.text}</span>
+              <button className="icon-button" aria-label="关闭提示" onClick={() => setToast(null)}>
+                <X size={16} />
+              </button>
+            </div>
+          ) : (
+            <div className="toast-soft" role="status">
+              {toast.text}
+            </div>
+          ))}
       </div>
     </Context.Provider>
   );
