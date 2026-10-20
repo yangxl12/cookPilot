@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { LoaderCircle, Pause, Play, Plus, Trash2 } from 'lucide-react';
 import { useApp } from '../../app/context';
 import { db } from '../../storage/db';
@@ -16,13 +17,22 @@ export function Timers({ onClose }: { onClose: () => void }) {
   const [minutes, setMinutes] = useState('5');
   const [adding, setAdding] = useState(false);
   const sessionId = app.route.sessionId;
+  const sessionIds = useMemo(
+    () => [...new Set(app.data.timers.map((timer) => timer.sessionId))],
+    [app.data.timers],
+  );
+  const sessions = useLiveQuery(
+    async () =>
+      new Map((await db.sessions.bulkGet(sessionIds)).flatMap((s) => (s ? [[s.id, s]] : []))),
+    [sessionIds],
+  );
   return (
     <Sheet title="计时器" onClose={onClose}>
       {!app.data.timers.length && (
         <p className="empty-help">还没有计时。从备菜或步骤中启动，或添加一个计时。</p>
       )}
       {app.data.timers.map((timer) => {
-        const session = app.data.sessions.find((s) => s.id === timer.sessionId);
+        const session = sessions?.get(timer.sessionId);
         const title = app.data.recipes.find((r) => r.id === session?.recipeId)?.name;
         const remaining = timerRemaining(timer, time);
         return (

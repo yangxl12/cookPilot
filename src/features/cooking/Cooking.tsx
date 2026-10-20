@@ -411,8 +411,17 @@ function Questions({
 }
 export function Cooking() {
   const app = useApp();
-  const { data } = app;
-  const session = data.sessions.find((s) => s.id === app.route.sessionId);
+  const sessionId = app.route.sessionId;
+  // Read this one record instead of the whole table: ticking a checkbox must not reload history.
+  const sessionSnapshot = useLiveQuery(
+    async () => ({
+      id: sessionId,
+      session: sessionId ? await db.sessions.get(sessionId) : undefined,
+    }),
+    [sessionId],
+  );
+  const sessionLoaded = sessionSnapshot?.id === sessionId;
+  const session = sessionLoaded ? sessionSnapshot?.session : undefined;
   const versionSnapshot = useLiveQuery(
     async () => ({
       id: session?.versionId,
@@ -441,7 +450,7 @@ export function Cooking() {
         : [],
     [sheet === 'versions', session?.recipeId],
   );
-  if (session && versionSnapshot?.id !== session.versionId)
+  if (!sessionLoaded || (session && versionSnapshot?.id !== session.versionId))
     return (
       <div className="boot" role="status">
         <LoaderCircle className="spin" size={24} />

@@ -11,10 +11,63 @@
     <meta name="description" content="选一道菜，跟着做，留住自己的做法。" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
+    <link rel="preload" href="/fonts/dm-sans-latin.woff2" as="font" type="font/woff2" crossorigin />
     <title>CookPilot · 烹饪助手</title>
+    <!-- Paints the first screen before the app bundle is parsed; React replaces it on mount. -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #f7efe6;
+      }
+      #boot {
+        min-height: 100dvh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        color: #b25017;
+        font:
+          400 14px/1.5 'DM Sans',
+          'PingFang SC',
+          'Microsoft YaHei',
+          sans-serif;
+      }
+      #boot i {
+        width: 18px;
+        height: 18px;
+        border: 2px solid rgba(178, 80, 23, 0.22);
+        border-top-color: currentColor;
+        border-radius: 50%;
+        animation: boot-spin 0.9s linear infinite;
+      }
+      @keyframes boot-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @media (prefers-color-scheme: dark) {
+        html,
+        body {
+          background: #130e0b;
+        }
+        #boot {
+          color: #e0a279;
+        }
+        #boot i {
+          border-color: rgba(224, 162, 121, 0.25);
+          border-top-color: currentColor;
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="boot" role="status">
+        <i></i>
+        正在打开厨房…
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

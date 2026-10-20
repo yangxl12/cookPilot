@@ -1,4 +1,3 @@
-import Dexie from 'dexie';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -16,7 +15,13 @@ import {
 import { useApp } from '../../app/context';
 import { db, setSetting } from '../../storage/db';
 import { commitGeneration, findExisting, reuseRecipe } from '../../storage/repository';
-import { uid, type Candidate, type Content, type Conversation } from '../../domain/schema';
+import {
+  uid,
+  type Candidate,
+  type Content,
+  type Conversation,
+  type RecipeVersion,
+} from '../../domain/schema';
 import { restrictionConflict, identity, effectivePreferences } from '../../domain/rules';
 import { recommend, generate } from '../../services/ai/cooking';
 import { search } from '../../services/ai/search';
@@ -62,24 +67,18 @@ export function Home() {
     ],
     [conversation, recipesByName],
   );
-  const latestVersions = useLiveQuery(
-    async () =>
-      new Map(
-        (
-          await Promise.all(
-            recipeIds.map((id) =>
-              db.versions
-                .where('[recipeId+number]')
-                .between([id, Dexie.minKey], [id, Dexie.maxKey])
-                .last(),
-            ),
-          )
-        )
-          .filter((v) => v !== undefined)
-          .map((v) => [v.recipeId, v]),
-      ),
-    [recipeIds],
-  );
+  const latestVersions = useLiveQuery(async () => {
+    // One range read for every candidate instead of a separate query per name.
+    const rows = recipeIds.length
+      ? await db.versions.where('recipeId').anyOf(recipeIds).toArray()
+      : [];
+    const latest = new Map<string, RecipeVersion>();
+    for (const version of rows) {
+      const current = latest.get(version.recipeId);
+      if (!current || current.number < version.number) latest.set(version.recipeId, version);
+    }
+    return latest;
+  }, [recipeIds]);
   const preferences = useMemo(
     () =>
       effectivePreferences(

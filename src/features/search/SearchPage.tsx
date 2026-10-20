@@ -2,8 +2,10 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Search, X } from 'lucide-react';
 import { useApp, type Route } from '../../app/context';
-import { catalog } from '../../assets/recipes';
+import { useSessions } from '../../app/data';
+import { catalogSync, loadCatalog } from '../../assets/recipes';
 import { contentSearchText, isExpired } from '../../domain/rules';
+import type { BuiltinRecipe, Content } from '../../domain/schema';
 import { db, setSetting } from '../../storage/db';
 import { openBuiltin } from '../../storage/repository';
 import { PageHeader } from '../../shared/PageHeader';
@@ -21,21 +23,60 @@ type SearchResult = {
   body: string;
   source: Source;
   route?: Route;
-  builtinId?: string;
+  builtin?: BuiltinRecipe;
   conversationId?: string;
   searchText: string;
 };
+
+const EMPTY: never[] = [];
+
+// Recipe versions are immutable once written, so their flattened search text never changes.
+const versionText = new Map<string, string>();
+function searchTextFor(versionId: string, content: Content): string {
+  let text = versionText.get(versionId);
+  if (text === undefined) {
+    text = contentSearchText(content);
+    versionText.set(versionId, text);
+  }
+  return text;
+}
+
+/**
+ * The bundled catalog is static, so its search text is built at most once per page lifetime.
+ * Searching used to rebuild all 200 entries on every mount.
+ */
+let catalogResults: SearchResult[] | null = null;
+function catalogIndex(): SearchResult[] | null {
+  const data = catalogSync();
+  if (!data) return null;
+  return (catalogResults ??= data.map((recipe) => {
+    const body = `${recipe.sourceText} ${contentSearchText(recipe.content)}`;
+    return {
+      id: recipe.id,
+      title: recipe.content.title,
+      body,
+      source: 'catalog' as const,
+      builtin: recipe,
+      searchText: `${recipe.content.title} ${body}`.toLowerCase(),
+    };
+  }));
+}
 
 function initialSearch() {
   const params = new URLSearchParams(location.hash.split('?')[1]);
   return params.get('q') ?? '';
 }
 
-function Highlight({ text, terms }: { text: string; terms: string[] }) {
-  const pattern = terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-  if (!pattern) return <>{text}</>;
+function patternFor(terms: string[]) {
+  return new RegExp(
+    `(${terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`,
+    'gi',
+  );
+}
+
+function Highlight({ text, terms, pattern }: { text: string; terms: string[]; pattern: RegExp }) {
   return text
-    .split(new RegExp(`(${pattern})`, 'gi'))
+    .split(pattern)
     .map((part, index) =>
       terms.includes(part.toLowerCase()) ? <mark key={index}>{part}</mark> : part,
     );
@@ -51,9 +92,8 @@ function snippet(body: string, terms: string[]) {
 
 export function SearchPage() {
   const app = useApp();
-  const { recipes, sessions } = app.data;
-  const versions = useLiveQuery(() => db.versions.toArray(), []);
-  const conversations = useLiveQuery(() => db.conversations.toArray(), []);
+  const { recipes } = app.data;
+  const sessions = useSessions() ?? [];
   const [query, setQuery] = useState(initialSearch);
   const input = useRef<HTMLInputElement>(null);
   const deferredQuery = useDeferredValue(query);
@@ -61,6 +101,29 @@ export function SearchPage() {
     () => [...new Set(deferredQuery.toLowerCase().trim().split(/\s+/).filter(Boolean))],
     [deferredQuery],
   );
+  const active = terms.length > 0;
+  const versions = useLiveQuery(() => db.versions.toArray(), []);
+  const conversations = useLiveQuery(() => db.conversations.toArray(), []);
+  const [builtins, setBuiltins] = useState<SearchResult[]>(() => catalogIndex() ?? EMPTY);
+  const [catalogError, setCatalogError] = useState<Error>();
+  useEffect(() => {
+    if (builtins.length) return;
+    let mounted = true;
+    // Build the static catalog index after the page has painted: typing should never wait for it.
+    const timer = setTimeout(() => {
+      void loadCatalog()
+        .then(() => {
+          if (mounted) setBuiltins(catalogIndex() ?? EMPTY);
+        })
+        .catch((error: Error) => {
+          if (mounted) setCatalogError(error);
+        });
+    }, 0);
+    return () => {
+      mounted = false;
+      clearTimeout(timer);
+    };
+  }, [builtins.length]);
 
   useEffect(() => {
     input.current?.focus();
@@ -91,7 +154,6 @@ export function SearchPage() {
     );
     const byId = new Map(versions?.map((version) => [version.id, version]));
     const changes = new Map<string, string[]>();
-    const contentText = new Map<string, string>();
     for (const version of versions ?? []) {
       const list = changes.get(version.recipeId) ?? [];
       list.push(version.change);
@@ -104,25 +166,16 @@ export function SearchPage() {
         .flatMap((session): Omit<SearchResult, 'searchText'>[] => {
           const version = byId.get(session.versionId);
           if (!version) return [];
-          if (!contentText.has(version.id))
-            contentText.set(version.id, contentSearchText(version.content));
           return [
             {
               id: session.id,
               title: version.content.title,
-              body: `${contentText.get(version.id)} ${session.note} ${changes.get(session.recipeId)?.join(' ') ?? ''}`,
+              body: `${searchTextFor(version.id, version.content)} ${session.note} ${changes.get(session.recipeId)?.join(' ') ?? ''}`,
               source: 'ai',
               route: { page: 'cook', sessionId: session.id },
             },
           ];
         }),
-      ...catalog.map((recipe) => ({
-        id: recipe.id,
-        title: recipe.content.title,
-        body: `${recipe.sourceText} ${contentSearchText(recipe.content)}`,
-        source: 'catalog' as const,
-        builtinId: recipe.id,
-      })),
       ...(conversations ?? [])
         .filter((conversation) => !isExpired(conversation.lastSentAt))
         .sort((a, b) => b.lastSentAt - a.lastSentAt)
@@ -139,11 +192,14 @@ export function SearchPage() {
           conversationId: conversation.id,
         })),
     ];
-    return results.map((result) => ({
-      ...result,
-      searchText: `${result.title} ${result.body}`.toLowerCase(),
-    }));
-  }, [recipes, versions, sessions, conversations]);
+    return [
+      ...results.map((result) => ({
+        ...result,
+        searchText: `${result.title} ${result.body}`.toLowerCase(),
+      })),
+      ...builtins,
+    ];
+  }, [recipes, versions, sessions, conversations, builtins]);
 
   const matches = useMemo(
     () =>
@@ -162,11 +218,8 @@ export function SearchPage() {
         await app.cancel();
         await setSetting('activeConversationId', result.conversationId);
         await app.navigate({ page: 'home' });
-      } else if (result.builtinId) {
-        const session = await openBuiltin(
-          catalog.find((recipe) => recipe.id === result.builtinId)!,
-          app.data.preferences,
-        );
+      } else if (result.builtin) {
+        const session = await openBuiltin(result.builtin, app.data.preferences);
         await app.navigate({ page: 'cook', sessionId: session.id });
       } else if (result.route) {
         await db.sessions.update(result.route.sessionId!, { currentCard: 0 });
@@ -181,6 +234,8 @@ export function SearchPage() {
     },
     [app.safe, open],
   );
+
+  if (catalogError) throw catalogError;
 
   return (
     <>
@@ -221,7 +276,7 @@ export function SearchPage() {
           </form>
         </div>
 
-        {terms.length > 0 && <SearchResults matches={matches} terms={terms} onSelect={select} />}
+        {active && <SearchResults matches={matches} terms={terms} onSelect={select} />}
       </main>
     </>
   );
@@ -271,16 +326,17 @@ function SearchGroup({
   onSelect: (result: SearchResult) => void;
 }) {
   const { visible, sentinel, hasMore } = usePagedItems(rows, terms.join('\0'));
+  const pattern = useMemo(() => patternFor(terms), [terms]);
   return (
     <section className="search-group" aria-label={`${label}搜索结果`}>
       <h2>{label}</h2>
       {visible.map((result) => (
         <button className="search-result" key={result.id} onClick={() => onSelect(result)}>
           <strong>
-            <Highlight text={result.title} terms={terms} />
+            <Highlight text={result.title} terms={terms} pattern={pattern} />
           </strong>
           <p>
-            <Highlight text={snippet(result.body, terms)} terms={terms} />
+            <Highlight text={snippet(result.body, terms)} terms={terms} pattern={pattern} />
           </p>
         </button>
       ))}

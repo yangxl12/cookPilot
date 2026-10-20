@@ -173,7 +173,12 @@ test('倒计时只刷新计时显示，隐藏时停止刷新，恢复时按截�
   });
   await resetAudit(page);
   await page.waitForTimeout(1200);
-  expect((await page.evaluate(() => window.performanceAudit)).renders).toEqual({});
+  // A toast may finish dismissing, but it is isolated: no page component may re-render.
+  const { ToastHost = 0, ...pageRenders } = await page.evaluate(
+    () => window.performanceAudit.renders,
+  );
+  expect(ToastHost).toBeLessThanOrEqual(1);
+  expect(pageRenders).toEqual({});
   await page.evaluate(async () => {
     const path = '/src/storage/db.ts';
     const { db } = await import(path);

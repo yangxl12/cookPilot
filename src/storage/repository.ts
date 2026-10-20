@@ -417,14 +417,25 @@ export async function clearData(): Promise<void> {
 }
 export async function initialize(): Promise<void> {
   await db.open();
-  await updateDeepSeekModels();
-  await pruneHistory();
-  // Pending requests in other live tabs remain valid. A stale document lease is interrupted.
-  const staleBefore = Date.now() - 45000;
+  // Independent maintenance: run it together instead of one round trip after another.
+  await Promise.all([updateDeepSeekModels(), pruneHistory(), repairInterruptedTasks()]);
+  await pruneLeases();
+  // Optional developer convenience; never allowed to hold up the first paint.
+  if (import.meta.env.DEV) void bootstrapLocalModel();
+  await setSetting(`lease:${pageOwner}`, Date.now());
+  if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('cookpilot-owner', pageOwner);
+}
+const staleBefore = () => Date.now() - 45000;
+// Pending requests in other live tabs remain valid. A stale document lease is interrupted.
+async function repairInterruptedTasks(): Promise<void> {
   const pending = await db.tasks.where('status').equals('pending').toArray();
+  // Nothing in flight means no conversation can hold a live pending message: skip the scan.
+  if (!pending.length) return;
+  const interrupted = new Set<string>();
   for (const task of pending) {
     const heartbeat = await setting<number>(`lease:${task.owner}`, 0);
-    if (task.owner === previousReloadOwner || heartbeat < staleBefore) {
+    if (task.owner === previousReloadOwner || heartbeat < staleBefore()) {
+      interrupted.add(task.id);
       await db.tasks.update(task.id, { status: 'interrupted' });
       if (task.kind === 'recommend')
         await db.conversations
@@ -440,7 +451,7 @@ export async function initialize(): Promise<void> {
     }
   }
   const activeTaskIds = new Set(
-    (await db.tasks.where('status').equals('pending').toArray()).map((t) => t.id),
+    pending.filter((task) => !interrupted.has(task.id)).map((task) => task.id),
   );
   await db.conversations
     .filter((c) =>
@@ -460,38 +471,39 @@ export async function initialize(): Promise<void> {
         }
       }
     });
+}
+async function pruneLeases(): Promise<void> {
   await db.transaction('rw', db.settings, async () => {
     const expiredLeases = (await db.settings.where('id').startsWith('lease:').toArray())
-      .filter((lease) => typeof lease.value !== 'number' || lease.value < staleBefore)
+      .filter((lease) => typeof lease.value !== 'number' || lease.value < staleBefore())
       .map((lease) => lease.id);
     if (expiredLeases.length) await db.settings.bulkDelete(expiredLeases);
   });
+}
+async function bootstrapLocalModel(): Promise<void> {
   if (
-    import.meta.env.DEV &&
-    !(await db.models.count()) &&
-    !(await setting('localBootstrapDisabled', false)) &&
-    !(await setting('localBootstrapCompleted', false))
-  ) {
-    try {
-      const response = await fetch(`${import.meta.env.BASE_URL}__local-model`, {
-        signal: AbortSignal.timeout(2500),
-        headers: { 'X-CookPilot-Local': '1' },
-        cache: 'no-store',
-      });
-      if (response.ok) {
-        const config = await response.json();
-        await saveModel(
-          { id: uid(), name: config.name, url: config.url, model: config.model },
-          config.key,
-        );
-        await setSetting('localBootstrapCompleted', true);
-      }
-    } catch {
-      /* Optional private developer configuration. UI remains usable without it. */
+    (await db.models.count()) ||
+    (await setting('localBootstrapDisabled', false)) ||
+    (await setting('localBootstrapCompleted', false))
+  )
+    return;
+  try {
+    const response = await fetch(`${import.meta.env.BASE_URL}__local-model`, {
+      signal: AbortSignal.timeout(2500),
+      headers: { 'X-CookPilot-Local': '1' },
+      cache: 'no-store',
+    });
+    if (response.ok) {
+      const config = await response.json();
+      await saveModel(
+        { id: uid(), name: config.name, url: config.url, model: config.model },
+        config.key,
+      );
+      await setSetting('localBootstrapCompleted', true);
     }
+  } catch {
+    /* Optional private developer configuration. UI remains usable without it. */
   }
-  await setSetting(`lease:${pageOwner}`, Date.now());
-  if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('cookpilot-owner', pageOwner);
 }
 export async function updateDeepSeekModels(): Promise<void> {
   await db.transaction('rw', [db.models, db.credentials, db.settings], async () => {

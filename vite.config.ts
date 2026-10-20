@@ -22,12 +22,11 @@ export default defineConfig({
   base: process.env.VITE_BASE_PATH || '/',
   define: { __APP_BUILD__: JSON.stringify(appBuild) },
   build: {
-    // The offline catalog is ~650 KB raw / ~83 KB gzip. Keep app/vendor warnings meaningful.
+    // The offline catalog ships as a separate JSON asset, so keep this about app code only.
     chunkSizeWarningLimit: 700,
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes('/assets/recipes/')) return 'catalog';
           if (id.includes('node_modules')) return 'vendor';
         },
       },
@@ -94,7 +93,8 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+        // assets/*.json carries the offline recipe catalog; version.json must stay uncached.
+        globPatterns: ['**/*.{js,css,html,svg,png,woff2}', 'assets/*.json'],
         navigateFallback: 'index.html',
         runtimeCaching: [],
         cleanupOutdatedCaches: true,

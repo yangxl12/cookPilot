@@ -1,6 +1,7 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { CircleAlert, LoaderCircle, X } from 'lucide-react';
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { LoaderCircle } from 'lucide-react';
 import { Context, type AppContext, type Route, type Work } from './context';
+import { notify, ToastHost } from './toast';
 import { db, setSetting } from '../storage/db';
 import { cancelTask, createTask, initialize, pageOwner, pruneHistory } from '../storage/repository';
 import type { Task } from '../domain/schema';
@@ -25,6 +26,7 @@ const RecipePages = lazy(() =>
 const Cooking = lazy(() =>
   import('../features/cooking/Cooking').then((m) => ({ default: m.Cooking })),
 );
+const DrawerMemo = memo(Drawer);
 
 function parseRoute(): Route {
   const [page, query] = location.hash.slice(1).split('?');
@@ -47,35 +49,22 @@ export function App() {
   const [fatal, setFatal] = useState('');
   const [route, setRoute] = useState<Route>(parseRoute);
   const [busy, setBusy] = useState<string | null>(null);
-  const [toast, setToast] = useState<{
-    text: string;
-    tone: 'info' | 'success' | 'error';
-  } | null>(null);
   const [sheet, setSheet] = useState<'history' | 'models' | 'preferences' | 'timers' | null>(null);
   const drawer = useSideDrawer(sheet !== null || route.page !== 'home');
   const [composerHost, setComposerHost] = useState<HTMLDivElement | null>(null);
   const active = useRef<{ controller: AbortController; taskId?: string } | null>(null);
-  const toastTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const data = useAppData();
   useVisualViewport();
-  const notify = useCallback((text: string, tone: 'info' | 'success' | 'error' = 'info') => {
-    setToast({ text, tone });
-    clearTimeout(toastTimeout.current);
-    toastTimeout.current = setTimeout(() => setToast(null), tone === 'error' ? 9000 : 2200);
+  const safe: AppContext['safe'] = useCallback(async (operation, success) => {
+    try {
+      const result = await operation();
+      if (success) notify(success, 'success');
+      return result;
+    } catch (error) {
+      notify(error instanceof Error ? error.message.slice(0, 700) : '操作失败，请重试', 'error');
+      return undefined;
+    }
   }, []);
-  const safe: AppContext['safe'] = useCallback(
-    async (operation, success) => {
-      try {
-        const result = await operation();
-        if (success) notify(success, 'success');
-        return result;
-      } catch (error) {
-        notify(error instanceof Error ? error.message.slice(0, 700) : '操作失败，请重试', 'error');
-        return undefined;
-      }
-    },
-    [notify],
-  );
   const cancel = useCallback(async () => {
     const request = active.current;
     active.current = null;
@@ -85,6 +74,10 @@ export function App() {
       if (request.taskId) await cancelTask(request.taskId);
     }
   }, []);
+  const showTimers = useCallback(() => setSheet('timers'), []);
+  const showModels = useCallback(() => setSheet('models'), []);
+  const showPreferences = useCallback(() => setSheet('preferences'), []);
+  const showHistory = useCallback(() => setSheet('history'), []);
   const navigate = useCallback(
     async (next: Route) => {
       await cancel();
@@ -109,54 +102,60 @@ export function App() {
     if (history.state?.depth > 0) history.back();
     else void navigate({ page: 'home' });
   }, [navigate]);
-  const work: AppContext['work'] = async (label, kind, contextId, operation, candidate) => {
-    if (active.current) return;
-    const request: { controller: AbortController; taskId?: string } = {
-      controller: new AbortController(),
-    };
-    active.current = request;
-    setBusy(label);
-    try {
-      const selected = data?.models.find((m) => m.id === data.activeModelId) ?? data?.models[0];
-      if (!selected) {
-        setSheet(null);
-        throw new Error('请先在我的厨房添加模型配置');
-      }
-      const credential = await db.credentials.get(selected.id);
-      if (active.current !== request) return;
-      const model = { ...selected, key: credential?.key ?? '' };
-      const task: Task = await createTask(kind, contextId, selected, candidate);
-      request.taskId = task.id;
-      if (active.current !== request) {
-        await cancelTask(task.id);
-        return;
-      }
-      const context: Work = {
-        task,
-        model,
-        signal: request.controller.signal,
-        valid: () => active.current === request && !request.controller.signal.aborted,
+  const work = useCallback<AppContext['work']>(
+    async (label, kind, contextId, operation, candidate) => {
+      if (active.current) return;
+      const request: { controller: AbortController; taskId?: string } = {
+        controller: new AbortController(),
       };
-      await operation(context);
-    } catch (error) {
-      if (request.taskId)
-        await db.tasks
-          .where('id')
-          .equals(request.taskId)
-          .modify((task) => {
-            if (task.status === 'pending')
-              task.status = request.controller.signal.aborted ? 'cancelled' : 'failed';
-          })
-          .catch(() => undefined);
-      if (!request.controller.signal.aborted)
-        notify(error instanceof Error ? error.message.slice(0, 700) : '请求失败，请重试', 'error');
-    } finally {
-      if (active.current === request) {
-        active.current = null;
-        setBusy(null);
+      active.current = request;
+      setBusy(label);
+      try {
+        const selected = data?.models.find((m) => m.id === data.activeModelId) ?? data?.models[0];
+        if (!selected) {
+          setSheet(null);
+          throw new Error('请先在我的厨房添加模型配置');
+        }
+        const credential = await db.credentials.get(selected.id);
+        if (active.current !== request) return;
+        const model = { ...selected, key: credential?.key ?? '' };
+        const task: Task = await createTask(kind, contextId, selected, candidate);
+        request.taskId = task.id;
+        if (active.current !== request) {
+          await cancelTask(task.id);
+          return;
+        }
+        const context: Work = {
+          task,
+          model,
+          signal: request.controller.signal,
+          valid: () => active.current === request && !request.controller.signal.aborted,
+        };
+        await operation(context);
+      } catch (error) {
+        if (request.taskId)
+          await db.tasks
+            .where('id')
+            .equals(request.taskId)
+            .modify((task) => {
+              if (task.status === 'pending')
+                task.status = request.controller.signal.aborted ? 'cancelled' : 'failed';
+            })
+            .catch(() => undefined);
+        if (!request.controller.signal.aborted)
+          notify(
+            error instanceof Error ? error.message.slice(0, 700) : '请求失败，请重试',
+            'error',
+          );
+      } finally {
+        if (active.current === request) {
+          active.current = null;
+          setBusy(null);
+        }
       }
-    }
-  };
+    },
+    [data],
+  );
   useEffect(() => {
     const root = document.documentElement;
     let scrolled = false;
@@ -222,7 +221,6 @@ export function App() {
       alive = false;
       clearInterval(interval);
       clearInterval(heartbeat);
-      clearTimeout(toastTimeout.current);
       void cancel().catch(() => undefined);
       void db.settings.delete(`lease:${pageOwner}`).catch(() => undefined);
       window.removeEventListener('popstate', onRoute);
@@ -239,6 +237,71 @@ export function App() {
       .register(`${import.meta.env.BASE_URL}sw.js`, { updateViaCache: 'none' })
       .catch(() => undefined);
   }, [ready]);
+  // A stable context keeps toasts, sheets and the drawer from re-rendering every page.
+  const context = useMemo<AppContext | null>(
+    () =>
+      data
+        ? {
+            data,
+            route,
+            busy,
+            composerHost,
+            menuOpen: drawer.open,
+            safe,
+            work,
+            cancel,
+            navigate,
+            back,
+            notify,
+            showTimers,
+            showModels,
+            showPreferences,
+            showHistory,
+            showMenu: drawer.show,
+          }
+        : null,
+    [
+      data,
+      route,
+      busy,
+      composerHost,
+      drawer.open,
+      drawer.show,
+      safe,
+      work,
+      cancel,
+      navigate,
+      back,
+      notify,
+      showTimers,
+      showModels,
+      showPreferences,
+      showHistory,
+    ],
+  );
+  // Keeping the page element stable means toasts, sheets and busy labels never re-render it.
+  const page = useMemo(
+    () => (
+      <PageBoundary key={route.page}>
+        <Suspense
+          fallback={
+            <div className="boot" role="status">
+              <LoaderCircle className="spin" size={24} />
+              正在打开…
+            </div>
+          }
+        >
+          {route.page === 'home' && <Home />}
+          {route.page === 'recipes' && <RecipePages key="catalog" />}
+          {route.page === 'ai-recipes' && <RecipePages key="ai" ai />}
+          {route.page === 'settings' && <Settings />}
+          {route.page === 'search' && <SearchPage />}
+          {route.page === 'cook' && <Cooking key={route.sessionId} />}
+        </Suspense>
+      </PageBoundary>
+    ),
+    [route.page, route.sessionId],
+  );
   if (fatal)
     return (
       <div className="app">
@@ -250,7 +313,7 @@ export function App() {
         </div>
       </div>
     );
-  if (!ready || !data)
+  if (!ready || !data || !context)
     return (
       <div className="app">
         <div className="boot" role="status">
@@ -259,24 +322,6 @@ export function App() {
         </div>
       </div>
     );
-  const context: AppContext = {
-    data,
-    route,
-    busy,
-    composerHost,
-    menuOpen: drawer.open,
-    safe,
-    work,
-    cancel,
-    navigate,
-    back,
-    notify,
-    showTimers: () => setSheet('timers'),
-    showModels: () => setSheet('models'),
-    showPreferences: () => setSheet('preferences'),
-    showHistory: () => setSheet('history'),
-    showMenu: drawer.show,
-  };
   return (
     <Context.Provider value={context}>
       <div
@@ -284,32 +329,14 @@ export function App() {
         data-drawer={drawer.open ? 'open' : drawer.closing ? 'closing' : 'closed'}
         ref={drawer.appRef}
       >
-        <Drawer
+        <DrawerMemo
           open={drawer.open}
           hidden={sheet !== null}
           onClose={drawer.hide}
           ref={drawer.drawerRef}
         />
         <div className="app-surface" inert={drawer.open}>
-          <div id="app-content">
-            <PageBoundary key={route.page}>
-              <Suspense
-                fallback={
-                  <div className="boot" role="status">
-                    <LoaderCircle className="spin" size={24} />
-                    正在打开…
-                  </div>
-                }
-              >
-                {route.page === 'home' && <Home />}
-                {route.page === 'recipes' && <RecipePages key="catalog" />}
-                {route.page === 'ai-recipes' && <RecipePages key="ai" ai />}
-                {route.page === 'settings' && <Settings />}
-                {route.page === 'search' && <SearchPage />}
-                {route.page === 'cook' && <Cooking key={route.sessionId} />}{' '}
-              </Suspense>
-            </PageBoundary>
-          </div>
+          <div id="app-content">{page}</div>
         </div>
         <div
           className="composer-host"
@@ -329,21 +356,7 @@ export function App() {
         {sheet === 'history' && <HistorySheet onClose={() => setSheet(null)} />}{' '}
         {sheet === 'models' && <ModelSwitch onClose={() => setSheet(null)} />}{' '}
         {sheet === 'preferences' && <PreferencesSheet onClose={() => setSheet(null)} />}{' '}
-        {sheet === 'timers' && <Timers onClose={() => setSheet(null)} />}{' '}
-        {toast &&
-          (toast.tone === 'error' ? (
-            <div className="toast toast-error" role="alert">
-              <CircleAlert size={19} aria-hidden="true" />
-              <span>{toast.text}</span>
-              <button className="icon-button" aria-label="关闭提示" onClick={() => setToast(null)}>
-                <X size={16} />
-              </button>
-            </div>
-          ) : (
-            <div className="toast-soft" role="status">
-              {toast.text}
-            </div>
-          ))}
+        {sheet === 'timers' && <Timers onClose={() => setSheet(null)} />} <ToastHost />
       </div>
     </Context.Provider>
   );

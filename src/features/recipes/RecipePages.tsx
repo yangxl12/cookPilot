@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import { useApp } from '../../app/context';
+import { useSessions } from '../../app/data';
 import { useCatalog } from '../../shared/useCatalog';
 import { usePagedItems } from '../../shared/usePagedItems';
 import { cookAgain, deleteSession, openBuiltin } from '../../storage/repository';
@@ -23,6 +24,7 @@ import { ActionButton } from '../../shared/ActionButton';
 export function RecipePages({ ai = false }: { ai?: boolean }) {
   const app = useApp();
   const { data } = app;
+  const allSessions = useSessions() ?? [];
   const catalog = useCatalog(!ai);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('全部');
@@ -40,11 +42,11 @@ export function RecipePages({ ai = false }: { ai?: boolean }) {
   const aiSessions = useMemo(
     () =>
       ai
-        ? data.sessions
+        ? allSessions
             .filter((s) => recipeIds.has(s.recipeId))
             .sort((a, b) => b.createdAt - a.createdAt)
         : [],
-    [ai, data.sessions, recipeIds],
+    [ai, allSessions, recipeIds],
   );
   const versionIds = useMemo(() => [...new Set(aiSessions.map((s) => s.versionId))], [aiSessions]);
   const versions = useLiveQuery(

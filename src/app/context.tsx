@@ -1,13 +1,5 @@
 import { createContext, useContext } from 'react';
-import type {
-  Recipe,
-  CookingSession,
-  Timer,
-  ModelConfig,
-  Preferences,
-  Task,
-  Candidate,
-} from '../domain/schema';
+import type { Recipe, Timer, ModelConfig, Preferences, Task, Candidate } from '../domain/schema';
 import type { ModelSnapshot } from '../services/ai/client';
 
 export type Route = {
@@ -16,7 +8,6 @@ export type Route = {
 };
 export type Data = {
   recipes: Recipe[];
-  sessions: CookingSession[];
   timers: Timer[];
   models: ModelConfig[];
   preferences: Preferences;

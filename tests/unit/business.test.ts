@@ -29,7 +29,8 @@ import {
 import { defaultPreferences, uid, type Candidate } from '../../src/domain/schema';
 import { contentExample } from '../../src/services/ai/cooking';
 import { endpoint } from '../../src/services/ai/client';
-import { catalog } from '../../src/assets/recipes';
+import catalog from '../../src/assets/recipes/catalog.json';
+import type { BuiltinRecipe } from '../../src/domain/schema';
 
 const model = {
   id: 'model',
