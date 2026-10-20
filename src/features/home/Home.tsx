@@ -19,6 +19,7 @@ import { commitGeneration, findExisting, reuseRecipe } from '../../storage/repos
 import { uid, type Candidate, type Content, type Conversation } from '../../domain/schema';
 import { restrictionConflict, identity, effectivePreferences } from '../../domain/rules';
 import { recommend, generate } from '../../services/ai/cooking';
+import { search } from '../../services/ai/search';
 import { ActionButton } from '../../shared/ActionButton';
 
 export function Home() {
@@ -242,6 +243,9 @@ export function Home() {
       'generate',
       conversation?.id ?? '',
       async ({ task, model, signal, valid }) => {
+        // DeepSeek 官方接口才有 tools/search：先查一遍真实做法，再让模型据此写完整指南。
+        const references = await search(model, `${candidate.name} 做法 食材用量`, { signal });
+        if (!valid()) return;
         const content = await generate(
           model,
           candidate,
@@ -255,13 +259,16 @@ export function Home() {
             .filter((m) => m.role === 'user')
             .map((m) => m.text)
             .join('\n') ?? '',
+          references,
         );
         if (!valid()) return;
         setDraft({ taskId: task.id, content, candidate });
         const session = await commitGeneration(task.id, content, candidate, preferences);
         setDraft(null);
         if (valid()) {
-          app.notify('菜谱已保存');
+          app.notify(
+            references.length ? `菜谱已保存 · 联网核对 ${references.length} 篇` : '菜谱已保存',
+          );
           await app.navigate({ page: 'cook', sessionId: session.id });
         }
       },

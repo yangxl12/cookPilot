@@ -14,6 +14,8 @@ async function mock(page: Page) {
     }),
   );
   await page.route('https://api.deepseek.com/**', async (route) => {
+    if (route.request().url().endsWith('/v1/tools/search'))
+      return route.fulfill({ json: { results: [] } });
     const body = route.request().postDataJSON();
     const system = body.messages?.[0]?.content ?? '';
     let result: unknown;
@@ -58,6 +60,33 @@ async function generate(page: Page) {
 
 test.beforeEach(async ({ page }) => {
   await mock(page);
+});
+test('生成前只查一次网页搜索，参考内容进入提示词', async ({ page }) => {
+  let searches = 0;
+  let prompt = '';
+  await page.route('https://api.deepseek.com/**', async (route) => {
+    if (!route.request().url().endsWith('/v1/tools/search')) return route.fallback();
+    searches++;
+    await route.fulfill({
+      json: {
+        results: [{ title: '番茄炒蛋', url: 'https://a.example/1', summary: '鸡蛋先炒后盛出。' }],
+      },
+    });
+  });
+  await page.route('https://api.deepseek.com/**', async (route) => {
+    const system = route.request().postDataJSON().messages?.[0]?.content ?? '';
+    if (!system.includes('完整指南按此')) return route.fallback();
+    prompt = route.request().postDataJSON().messages[1].content;
+    await route.fulfill({
+      json: {
+        choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(contentExample) } }],
+      },
+    });
+  });
+  await generate(page);
+  expect(searches).toBe(1);
+  expect(prompt).toContain('网络参考');
+  expect(prompt).toContain('鸡蛋先炒后盛出。');
 });
 test('步骤漏写油的引用仍可生成、保存，刷新后保留正确的分步用量', async ({ page }) => {
   const guide = structuredClone(contentExample);

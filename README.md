@@ -21,9 +21,11 @@ npm run dev
 
 官方已于 2026-07-24 [停用 `deepseek-chat` 与 `deepseek-reasoner`](https://api-docs.deepseek.com/news/news260424/)。启动时移除指向官方接口的这两种旧配置及对应凭据，当前选中项自动切换至剩余配置；旧 Demo 迁移也会跳过它们。旧 Flash 别名统一为 `deepseek-flash`，原 API Key 保留。第三方兼容服务的模型名由其服务决定。
 
+选中 DeepSeek 官方接口时，生成完整菜谱前会先调用[网页搜索](https://api-docs.deepseek.com/zh-cn/guides/search/)（`POST /v1/tools/search`）取 5 篇做法摘要，让模型据此核对用料和处理顺序，再输出完整 JSON；首页推荐与制作问答不联网。搜索按请求计费（每 1000 次 5 元，无结果不计费），失败、超时、没有可用结果或第三方接口一律静默跳过，不影响生成。检索只取摘要、不抓正文，摘要会去掉 Markdown 标记并截断到 600 字。
+
 ## 首版功能
 
-- 自然语言对话与候选推荐，选中一道才生成完整指南；结构和用量检查通过后原子保存。
+- 自然语言对话与候选推荐，选中一道才生成完整指南；DeepSeek 官方接口会先联网核对做法。结构和用量检查通过后原子保存。
 - AI 菜谱、独立制作记录、再次制作、删除、已知别名复用与忌口冲突提示。
 - 200 道本地菜谱，支持搜索和分类，点选即可使用，无需模型或联网。
 - 准备卡和逐步烹饪卡、滑动、步骤目录、查看位置与备菜勾选恢复。
@@ -94,7 +96,7 @@ Key 与业务实体分表保存，仅在请求时读取；不进入提示词、�
 src/app/                  初始化、路由和应用上下文
 src/features/             首页、菜谱、制作和设置页面
 src/domain/               实体、schema、身份、用量与版本规则
-src/services/ai/           fetch 适配、提示词、解析和校验
+src/services/ai/           fetch 适配、网页搜索、提示词、解析和校验
 src/storage/              Dexie 数据库、事务业务、迁移与导出
 src/shared/               弹层和沿用 Demo 参数的样式
 src/assets/recipes/       200 道结构化本地资料

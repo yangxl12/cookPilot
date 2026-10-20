@@ -15,6 +15,15 @@ export function isDeepSeek(url: string): boolean {
   }
 }
 
+// The tools API lives at a fixed path: https://api-docs.deepseek.com/zh-cn/guides/search/
+export function searchEndpoint(url: string): string {
+  const root = url
+    .replace(/\/+$/, '')
+    .replace(/\/chat\/completions$/, '')
+    .replace(/\/v1$/, '');
+  return `${root}/v1/tools/search`;
+}
+
 export function isRetiredDeepSeek(config: ModelConfig): boolean {
   return (
     isDeepSeek(config.url) && ['deepseek-chat', 'deepseek-reasoner'].includes(config.model.trim())

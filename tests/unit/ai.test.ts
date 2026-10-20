@@ -201,6 +201,19 @@ it('生成时补齐备菜及 sear/combine 漏写的用量引用，按分配渲�
   content.ingredients[2].quantity = 30;
   expect(renderAction(content, content.steps[1])).toContain('食用油 10ml');
 });
+it('生成时把联网参考放在提问里，重试仍保留且不泄露 Key', async () => {
+  const fetcher = vi.fn().mockResolvedValue(result(JSON.stringify(contentExample)));
+  vi.stubGlobal('fetch', fetcher);
+  await generate(model, candidate, '', defaultPreferences(), new AbortController().signal, '', [
+    { title: '家常番茄炒蛋', url: 'https://example.com/a', summary: '鸡蛋先炒后盛出。' },
+  ]);
+  const request = JSON.parse(fetcher.mock.calls[0][1].body);
+  const user = request.messages.find((m: { role: string }) => m.role === 'user').content;
+  expect(user).toContain('网络参考');
+  expect(user).toContain('家常番茄炒蛋：鸡蛋先炒后盛出。');
+  expect(user).not.toContain('example.com/a');
+  expect(user).not.toContain(model.key);
+});
 it('完整引用和零比例的处理操作保持原样，定性用量也可补齐', async () => {
   const qualitative = structuredClone(contentExample);
   qualitative.ingredients[2].quantity = null;

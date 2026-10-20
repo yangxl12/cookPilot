@@ -1,4 +1,5 @@
 import { chat, ModelError, parseJson, type ChatMessage, type ModelSnapshot } from './client';
+import { referenceBlock, type Reference } from './search';
 import {
   answerSchema,
   contentSchema,
@@ -207,12 +208,13 @@ export async function generate(
   preferences: Preferences,
   signal: AbortSignal,
   explicitUserText = requirements,
+  references: Reference[] = [],
 ): Promise<Content> {
   const messages: ChatMessage[] = [
     { role: 'system', content: `${base}\n${contentRules}` },
     {
       role: 'user',
-      content: `只生成选中的一道菜：${candidate.name}。相关对话与本次要求：${requirements}。通用偏好：${JSON.stringify(preferences)}`,
+      content: `只生成选中的一道菜：${candidate.name}。相关对话与本次要求：${requirements}。通用偏好：${JSON.stringify(preferences)}${references.length ? `\n${referenceBlock(references)}` : ''}`,
     },
   ];
   let previous = '';
