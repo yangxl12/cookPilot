@@ -1,19 +1,23 @@
 import { useEffect, useRef, type ReactNode } from 'react';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, Check } from 'lucide-react';
 
 export function Carousel({
   index,
   labels,
   onSelect,
+  onFinish,
+  finishLabel = '完成，返回首页',
   children,
 }: {
   index: number;
   labels: string[];
   onSelect: (index: number) => void;
+  onFinish?: () => void;
+  finishLabel?: string;
   children: ReactNode[];
 }) {
   const track = useRef<HTMLDivElement>(null);
-  const navigation = useRef<HTMLElement>(null);
+  const navigation = useRef<HTMLDivElement>(null);
   const selected = useRef(index);
   const select = useRef(onSelect);
   const count = useRef(labels.length);
@@ -63,14 +67,37 @@ export function Carousel({
     if (element && stride.current && Math.abs(element.scrollLeft - index * stride.current) > 2)
       element.scrollTo({ left: index * stride.current, behavior: 'instant' });
     const button = navigation.current?.children[index] as HTMLElement | undefined;
-    if (button && navigation.current) {
-      const nav = navigation.current;
+    const nav = navigation.current;
+    if (button && nav) {
+      // offsetLeft 的参照物是 offsetParent，不一定是导航条本身，用矩形差算才不会偏。
+      const rect = button.getBoundingClientRect();
+      const navRect = nav.getBoundingClientRect();
       nav.scrollTo({
-        left: button.offsetLeft - nav.offsetLeft - (nav.clientWidth - button.clientWidth) / 2,
+        left: nav.scrollLeft + rect.left - navRect.left - (nav.clientWidth - rect.width) / 2,
         behavior: 'instant',
       });
     }
   }, [index]);
+  useEffect(() => {
+    const element = navigation.current;
+    if (!element) return;
+    // 滚到两端时文字会直接切在圆角上，淡出一点才不像是错位。
+    const edges = () => {
+      const max = element.scrollWidth - element.clientWidth;
+      const next = [element.scrollLeft > 2 && 'l', element.scrollLeft < max - 2 && 'r']
+        .filter(Boolean)
+        .join(' ');
+      if (element.dataset.edge !== next) element.dataset.edge = next;
+    };
+    edges();
+    const observer = new ResizeObserver(edges);
+    observer.observe(element);
+    element.addEventListener('scroll', edges, { passive: true });
+    return () => {
+      observer.disconnect();
+      element.removeEventListener('scroll', edges);
+    };
+  }, [labels.length]);
   return (
     <>
       <div
@@ -99,7 +126,7 @@ export function Carousel({
           >
             <div className="step-card-scroll" tabIndex={i === index ? 0 : -1}>
               {child}
-              {i < labels.length - 1 && (
+              {i < labels.length - 1 ? (
                 <button
                   className="primary wide card-next"
                   aria-label={`下一步：${labels[i + 1]}`}
@@ -108,24 +135,33 @@ export function Carousel({
                   {i === 0 ? '开始烹饪' : '下一步'}
                   <ArrowRight size={17} />
                 </button>
+              ) : (
+                onFinish && (
+                  <button className="primary wide card-next" onClick={onFinish}>
+                    <Check size={17} />
+                    {finishLabel}
+                  </button>
+                )
               )}
             </div>
           </article>
         ))}
       </div>
-      <nav className="card-pagination" aria-label="跳转步骤" ref={navigation}>
-        {labels.map((label, i) => (
-          <button
-            key={i}
-            className={i === index ? 'active' : ''}
-            aria-label={i ? `跳转第 ${i} 步` : '跳转准备卡片'}
-            aria-current={i === index ? 'step' : undefined}
-            onClick={() => onSelect(i)}
-          >
-            {i > 0 && <span className="step-tab-number">{i}</span>}
-            {label}
-          </button>
-        ))}
+      <nav className="card-pagination" aria-label="跳转步骤">
+        <div className="card-pagination-track" ref={navigation}>
+          {labels.map((label, i) => (
+            <button
+              key={i}
+              className={i === index ? 'active' : ''}
+              aria-label={i ? `跳转第 ${i} 步` : '跳转准备卡片'}
+              aria-current={i === index ? 'step' : undefined}
+              onClick={() => onSelect(i)}
+            >
+              {i > 0 && <span className="step-tab-number">{i}</span>}
+              {label}
+            </button>
+          ))}
+        </div>
       </nav>
     </>
   );

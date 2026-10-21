@@ -628,6 +628,9 @@ export function Cooking() {
           index={index}
           labels={['准备', ...content.steps.map((s) => s.title)]}
           onSelect={select}
+          onFinish={() => {
+            void app.navigate({ page: 'home' });
+          }}
         >
           {[
             preparation,

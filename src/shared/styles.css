@@ -2427,8 +2427,11 @@ html[data-scrolled='true'] {
 }
 .card-pagination {
   margin: 0 16px calc(14px + env(safe-area-inset-bottom));
-  padding: 8px;
-  gap: 6px;
+  padding: 0;
+  gap: 0;
+  display: block;
+  /* 玻璃和边光留在不滚动的一层，横向滚动交给里面的轨道，否则 ::before 的边光会跟着内容跑偏 */
+  overflow: hidden;
   border: 1px solid var(--glass-line);
   border-radius: 22px;
   background-color: var(--glass-2);
@@ -2437,6 +2440,41 @@ html[data-scrolled='true'] {
     inset 0 1px 0 var(--rim);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   backdrop-filter: blur(24px) saturate(180%);
+}
+.card-pagination-track {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.card-pagination-track::-webkit-scrollbar {
+  display: none;
+}
+.card-pagination-track[data-edge~='l'] {
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 20px);
+  mask-image: linear-gradient(90deg, transparent 0, #000 20px);
+}
+.card-pagination-track[data-edge~='r'] {
+  -webkit-mask-image: linear-gradient(270deg, transparent 0, #000 20px);
+  mask-image: linear-gradient(270deg, transparent 0, #000 20px);
+}
+.card-pagination-track[data-edge~='l'][data-edge~='r'] {
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    transparent 0,
+    #000 20px,
+    #000 calc(100% - 20px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    90deg,
+    transparent 0,
+    #000 20px,
+    #000 calc(100% - 20px),
+    transparent 100%
+  );
 }
 .card-pagination button {
   border-radius: 15px;

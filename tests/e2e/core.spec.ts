@@ -652,3 +652,10 @@ test('分析中刷新会标记中断，不留下永久处理中消息', async ({
   await page.getByRole('textbox', { name: '描述做菜需求' }).fill('再试一次');
   await expect(page.getByRole('button', { name: '发送消息' })).toBeEnabled();
 });
+test('最后一步可以直接完成并返回首页', async ({ page }) => {
+  await generate(page);
+  await page.getByRole('button', { name: '下一步：炒蛋盛出', exact: true }).click();
+  await page.getByRole('button', { name: '下一步：炒番茄与合炒', exact: true }).click();
+  await page.getByRole('button', { name: '完成，返回首页' }).click();
+  await expect(page.getByRole('textbox', { name: '描述做菜需求' })).toBeVisible();
+});
