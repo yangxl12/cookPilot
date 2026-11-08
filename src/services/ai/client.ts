@@ -25,6 +25,7 @@ export async function chat(
   messages: ChatMessage[],
   options: { signal?: AbortSignal; json?: boolean; maxTokens?: number; timeoutMs?: number } = {},
 ): Promise<string> {
+  options.signal?.throwIfAborted();
   if (isRetiredDeepSeek(snapshot)) throw new ModelError(retiredModelMessage);
   let service: URL;
   try {
@@ -52,6 +53,7 @@ export async function chat(
     controller.abort();
   }, options.timeoutMs ?? 90000);
   try {
+    controller.signal.throwIfAborted();
     const body: Record<string, unknown> = {
       model: normalizeModelConfig(snapshot).model,
       messages,
@@ -80,7 +82,17 @@ export async function chat(
     } catch (error) {
       // A dropped connection often succeeds on a second try. Timeouts and cancellations never repeat.
       if (timeout || controller.signal.aborted) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          clearTimeout(retryTimer);
+          reject(controller.signal.reason);
+        };
+        const retryTimer = setTimeout(() => {
+          controller.signal.removeEventListener('abort', onAbort);
+          resolve();
+        }, 600);
+        controller.signal.addEventListener('abort', onAbort, { once: true });
+      });
       if (timeout || controller.signal.aborted) throw error;
       response = await send();
     }
@@ -102,6 +114,7 @@ export async function chat(
       );
     }
     const result = await response.json();
+    controller.signal.throwIfAborted();
     const choice = result.choices?.[0];
     if (choice?.finish_reason === 'length')
       throw new ModelError('模型输出被截断，未保存。请重试或简化要求');
@@ -112,6 +125,9 @@ export async function chat(
       throw new ModelError('模型返回空内容，请重试');
     return content.trim();
   } catch (error) {
+    if (options.signal?.aborted && options.signal.reason?.name === 'AbortError')
+      throw new DOMException('请求已取消', 'AbortError');
+    options.signal?.throwIfAborted();
     if (timeout) throw new ModelError('请求超时，未自动重试；上游可能已产生用量，请稍后重试');
     if (controller.signal.aborted) throw new DOMException('请求已取消', 'AbortError');
     if (error instanceof ModelError) throw error;

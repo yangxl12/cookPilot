@@ -16,6 +16,7 @@ import { Timers } from '../features/cooking/Timers';
 import { ModelSwitch, PreferencesSheet, Settings } from '../features/settings/Settings';
 import { migrateLegacy } from '../storage/migration';
 import { PageBoundary } from '../shared/PageBoundary';
+import { startTaskBudget, TaskTimeoutError } from '../services/ai/budget';
 
 const SearchPage = lazy(() =>
   import('../features/search/SearchPage').then((m) => ({ default: m.SearchPage })),
@@ -110,6 +111,7 @@ export function App() {
       };
       active.current = request;
       setBusy(label);
+      const stopBudget = startTaskBudget(request.controller);
       try {
         const selected = data?.models.find((m) => m.id === data.activeModelId) ?? data?.models[0];
         if (!selected) {
@@ -118,6 +120,7 @@ export function App() {
         }
         const credential = await db.credentials.get(selected.id);
         if (active.current !== request) return;
+        request.controller.signal.throwIfAborted();
         const model = { ...selected, key: credential?.key ?? '' };
         const task: Task = await createTask(kind, contextId, selected, candidate);
         request.taskId = task.id;
@@ -125,6 +128,7 @@ export function App() {
           await cancelTask(task.id);
           return;
         }
+        request.controller.signal.throwIfAborted();
         const context: Work = {
           task,
           model,
@@ -139,15 +143,22 @@ export function App() {
             .equals(request.taskId)
             .modify((task) => {
               if (task.status === 'pending')
-                task.status = request.controller.signal.aborted ? 'cancelled' : 'failed';
+                task.status =
+                  request.controller.signal.aborted &&
+                  !(request.controller.signal.reason instanceof TaskTimeoutError)
+                    ? 'cancelled'
+                    : 'failed';
             })
             .catch(() => undefined);
-        if (!request.controller.signal.aborted)
+        if (request.controller.signal.reason instanceof TaskTimeoutError)
+          notify(request.controller.signal.reason.message, 'error');
+        else if (!request.controller.signal.aborted)
           notify(
             error instanceof Error ? error.message.slice(0, 700) : '请求失败，请重试',
             'error',
           );
       } finally {
+        stopBudget();
         if (active.current === request) {
           active.current = null;
           setBusy(null);

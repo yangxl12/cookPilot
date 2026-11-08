@@ -49,17 +49,27 @@ export const newSession = (recipeId: string, versionId: string): CookingSession 
   note: '',
   createdAt: Date.now(),
 });
+export function latestVersion(recipeId: string) {
+  return db.versions
+    .where('[recipeId+number]')
+    .between([recipeId, Dexie.minKey], [recipeId, Dexie.maxKey])
+    .last();
+}
 export async function findExisting(
   name: string,
 ): Promise<{ recipe: Recipe; version: RecipeVersion; session?: CookingSession } | undefined> {
-  const recipes = await db.recipes.where('source').equals('ai').toArray();
   // Only application-maintained known aliases identify a dish. Model-proposed aliases never merge entities.
-  const recipe = recipes.find((r) => nameMatches(name, [r.name, ...r.aliases]));
+  const exact = await db.recipes
+    .where('[source+identity]')
+    .equals(['ai', identity(name)])
+    .first();
+  const recipe =
+    exact ??
+    (await db.recipes.where('source').equals('ai').toArray()).find((r) =>
+      nameMatches(name, [r.name, ...r.aliases]),
+    );
   if (!recipe) return;
-  const version = await db.versions
-    .where('[recipeId+number]')
-    .between([recipe.id, Dexie.minKey], [recipe.id, Dexie.maxKey])
-    .last();
+  const version = await latestVersion(recipe.id);
   if (!version) return;
   const sessions = await db.sessions.where('versionId').equals(version.id).toArray();
   return { recipe, version, session: sessions.sort((a, b) => b.createdAt - a.createdAt)[0] };
@@ -234,11 +244,11 @@ export async function saveProposal(messageId: string): Promise<void> {
       };
       const conflict = restrictionConflict(content, preferences);
       if (conflict) throw new Error(conflict);
-      const versions = await db.versions.where('recipeId').equals(session.recipeId).toArray();
+      const latest = await latestVersion(session.recipeId);
       const version: RecipeVersion = {
         id: uid(),
         recipeId: session.recipeId,
-        number: Math.max(...versions.map((v) => v.number)) + 1,
+        number: (latest?.number ?? previous.number) + 1,
         parentId: previous.id,
         content,
         preferences,

@@ -235,3 +235,38 @@ test('反复开关弹层和烹饪页面后，监听器及DOM节点不持续增�
   // Allow normal engine/cache variation, but catch retained sheets, cards and subscriptions.
   expect(final.JSHeapUsedSize - baseline.JSHeapUsedSize).toBeLessThan(2 * 1024 * 1024);
 });
+
+test('首页输入草稿不重新渲染历史消息或检查候选版本', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: '想做什么菜？' })).toBeVisible();
+  await page.evaluate(async () => {
+    const path = '/src/storage/db.ts';
+    const { db } = await import(path);
+    const now = Date.now();
+    await db.conversations.put({
+      id: 'typing',
+      title: '长对话',
+      createdAt: now,
+      lastSentAt: now,
+      messages: Array.from({ length: 1000 }, (_, index) => ({
+        id: `m${index}`,
+        role: index % 2 ? 'assistant' : 'user',
+        text: `历史${index}`,
+        createdAt: now + index,
+      })),
+    });
+    await db.settings.put({ id: 'activeConversationId', value: 'typing' });
+  });
+  await expect(page.locator('.discovery-conversation .message')).toHaveCount(40);
+  await resetAudit(page);
+  await page.getByRole('textbox', { name: '描述做菜需求' }).fill('番茄和鸡蛋');
+  const audit = await page.evaluate(() => window.performanceAudit);
+  expect(audit.renders.Home ?? 0).toBe(0);
+  expect(audit.renders.MessageHistory ?? 0).toBe(0);
+  expect(audit.reads).toEqual({});
+  await page.getByRole('button', { name: '新建对话' }).click();
+  await expect(page.getByRole('textbox', { name: '描述做菜需求' })).toHaveValue('');
+  await page.getByRole('textbox', { name: '描述做菜需求' }).fill('尚未发送');
+  await page.getByRole('button', { name: '新建对话' }).click();
+  await expect(page.getByRole('textbox', { name: '描述做菜需求' })).toHaveValue('');
+});

@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   Check,
@@ -27,6 +27,7 @@ import {
 } from '../../domain/schema';
 import { askCooking } from '../../services/ai/cooking';
 import { search, supportsSearch } from '../../services/ai/search';
+import { MessageHistory } from '../../shared/MessageHistory';
 import { Sheet } from '../../shared/Sheet';
 import { Carousel } from './Carousel';
 import { ActionButton } from '../../shared/ActionButton';
@@ -141,7 +142,11 @@ function Questions({
   );
   const messages =
     useLiveQuery(
-      () => db.cookingMessages.where('sessionId').equals(session.id).sortBy('createdAt'),
+      () =>
+        db.cookingMessages
+          .where('[sessionId+createdAt]')
+          .between([session.id, -Infinity], [session.id, Infinity])
+          .toArray(),
       [session.id],
     ) ?? [];
   const content = version.content;
@@ -184,9 +189,12 @@ function Questions({
             content: currentVersion.content,
             session: fresh,
             messages: await db.cookingMessages
-              .where('sessionId')
-              .equals(session.id)
-              .sortBy('createdAt'),
+              .where('[sessionId+createdAt]')
+              .between([session.id, -Infinity], [session.id, Infinity])
+              .reverse()
+              .limit(10)
+              .toArray()
+              .then((rows) => rows.reverse()),
             timers: app.data.timers.filter((t) => t.sessionId === session.id),
             preferences,
             strict:
@@ -228,6 +236,82 @@ function Questions({
     setProgressEditor(false);
     app.notify('实际进度已确认，请重新发送调整要求');
   };
+  const history = useMemo(
+    () => (
+      <div className="cooking-messages" aria-live="polite">
+        {!messages.length && <p className="empty-help">遇到状况，描述锅里发生了什么。</p>}
+        <MessageHistory
+          messages={messages}
+          renderMessage={(message) => (
+            <div className={`message ${message.role}`} key={message.id}>
+              <p className="message-text">{message.text}</p>
+              {!!message.answer?.confirmations.length && (
+                <button className="text-button" onClick={() => setProgressEditor(true)}>
+                  核对实际进度
+                  <ArrowLeft size={14} className="rotate" />
+                </button>
+              )}
+              {message.answer?.proposal && (
+                <div className="proposal">
+                  <h3>建议调整</h3>
+                  <p>{message.answer.proposal.explanation}</p>
+                  <ul>
+                    {[...message.answer.proposal.prep, ...message.answer.proposal.steps].map(
+                      (s) => (
+                        <li key={s.id}>
+                          {s.title}：
+                          {renderAction(
+                            {
+                              ...content,
+                              ingredients: content.ingredients.map(
+                                (i) =>
+                                  message.answer?.proposal?.ingredients.find(
+                                    (p) => p.id === i.id,
+                                  ) ?? i,
+                              ),
+                            },
+                            s,
+                          )}
+                        </li>
+                      ),
+                    )}
+                  </ul>
+                  {message.proposalStatus === 'pending' ? (
+                    <>
+                      <ActionButton
+                        className="primary wide"
+                        disabled={!!app.busy}
+                        pendingLabel="正在更新…"
+                        success="已更新本次制作，原版本已保留"
+                        action={() => saveProposal(message.id)}
+                      >
+                        确认更新本次做法
+                      </ActionButton>
+                      <button
+                        className="secondary wide"
+                        onClick={() => {
+                          void app.safe(() =>
+                            db.cookingMessages.update(message.id, { proposalStatus: 'cancelled' }),
+                          );
+                        }}
+                      >
+                        取消建议
+                      </button>
+                    </>
+                  ) : (
+                    <p className="badge">
+                      {message.proposalStatus === 'applied' ? '已应用' : '已取消'}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        />
+      </div>
+    ),
+    [messages, content, app.busy, app.safe],
+  );
   return (
     <Sheet
       title="问问 AI"
@@ -282,70 +366,7 @@ function Questions({
           </ActionButton>
         </div>
       )}
-      <div className="cooking-messages" aria-live="polite">
-        {!messages.length && <p className="empty-help">遇到状况，描述锅里发生了什么。</p>}
-        {messages.map((message) => (
-          <div className={`message ${message.role}`} key={message.id}>
-            <p className="message-text">{message.text}</p>
-            {!!message.answer?.confirmations.length && (
-              <button className="text-button" onClick={() => setProgressEditor(true)}>
-                核对实际进度
-                <ArrowLeft size={14} className="rotate" />
-              </button>
-            )}
-            {message.answer?.proposal && (
-              <div className="proposal">
-                <h3>建议调整</h3>
-                <p>{message.answer.proposal.explanation}</p>
-                <ul>
-                  {[...message.answer.proposal.prep, ...message.answer.proposal.steps].map((s) => (
-                    <li key={s.id}>
-                      {s.title}：
-                      {renderAction(
-                        {
-                          ...content,
-                          ingredients: content.ingredients.map(
-                            (i) =>
-                              message.answer?.proposal?.ingredients.find((p) => p.id === i.id) ?? i,
-                          ),
-                        },
-                        s,
-                      )}
-                    </li>
-                  ))}
-                </ul>
-                {message.proposalStatus === 'pending' ? (
-                  <>
-                    <ActionButton
-                      className="primary wide"
-                      disabled={!!app.busy}
-                      pendingLabel="正在更新…"
-                      success="已更新本次制作，原版本已保留"
-                      action={() => saveProposal(message.id)}
-                    >
-                      确认更新本次做法
-                    </ActionButton>
-                    <button
-                      className="secondary wide"
-                      onClick={() => {
-                        void app.safe(() =>
-                          db.cookingMessages.update(message.id, { proposalStatus: 'cancelled' }),
-                        );
-                      }}
-                    >
-                      取消建议
-                    </button>
-                  </>
-                ) : (
-                  <p className="badge">
-                    {message.proposalStatus === 'applied' ? '已应用' : '已取消'}
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
+      {history}
       <div className="quick-questions">
         {(session.currentCard === 0
           ? ['材料不够怎么办', '可以提前准备什么']

@@ -1,5 +1,6 @@
 import type { ModelSnapshot } from './client';
 import { isDeepSeek, searchEndpoint } from './providers';
+import { SEARCH_TIMEOUT_MS } from './budget';
 
 /** One web page the model may consult. score is DeepSeek's rerank value: 0~3, -1 when unknown. */
 export type Reference = { title: string; url: string; summary: string; score: number };
@@ -49,6 +50,7 @@ export async function search(
     maxChars?: number;
   } = {},
 ): Promise<Reference[]> {
+  options.signal?.throwIfAborted();
   if (!canSearch(snapshot) || !query.trim()) return [];
   const maxChars = options.maxChars ?? 600;
   const controller = new AbortController();
@@ -59,7 +61,7 @@ export async function search(
   const handle = setTimeout(() => {
     timeout = true;
     controller.abort();
-  }, options.timeoutMs ?? 12000);
+  }, options.timeoutMs ?? SEARCH_TIMEOUT_MS);
   try {
     const response = await fetch(searchEndpoint(snapshot.url), {
       method: 'POST',
@@ -79,6 +81,7 @@ export async function search(
     });
     if (!response.ok) return [];
     const payload = await response.json();
+    controller.signal.throwIfAborted();
     const results: unknown = payload?.results;
     if (!Array.isArray(results)) return [];
     return results.flatMap((item: Record<string, unknown>) => {
@@ -92,6 +95,9 @@ export async function search(
       return [{ title: limit(item.title) || url, url, summary, score }];
     });
   } catch {
+    if (options.signal?.aborted && options.signal.reason?.name === 'AbortError')
+      throw new DOMException('请求已取消', 'AbortError');
+    options.signal?.throwIfAborted();
     if (!timeout && controller.signal.aborted) throw new DOMException('请求已取消', 'AbortError');
     return [];
   } finally {

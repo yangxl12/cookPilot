@@ -1314,6 +1314,13 @@ svg {
 .cooking-messages {
   margin-top: 20px;
 }
+.message-pagination {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 12px 0 20px;
+  scroll-margin-top: 80px;
+}
 .cooking-messages .message {
   font-size: 14px;
   line-height: 1.8;

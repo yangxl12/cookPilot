@@ -37,6 +37,9 @@ export class CookDatabase extends Dexie {
       tasks: 'id, status, contextId, owner',
       settings: 'id',
     });
+    this.version(2).stores({
+      cookingMessages: 'id, sessionId, createdAt, [sessionId+createdAt]',
+    });
   }
 }
 export const db = new CookDatabase();

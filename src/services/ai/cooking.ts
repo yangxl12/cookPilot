@@ -243,7 +243,10 @@ export async function generate(
     } catch (error) {
       const explanation = contentError(error);
       if (attempt === 2) throw new Error(`菜谱内容校验未通过，未保存：${explanation}`);
-      messages.push(
+      // Replace obsolete failures; each repair sees the original constraints and latest output.
+      messages.splice(
+        2,
+        messages.length - 2,
         { role: 'assistant', content: previous },
         {
           role: 'user',

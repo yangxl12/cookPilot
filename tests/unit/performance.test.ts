@@ -1,6 +1,135 @@
 import { expect, it, vi } from 'vitest';
 import { db, setSetting, setting } from '../../src/storage/db';
-import { initialize, pageOwner, pruneHistory } from '../../src/storage/repository';
+import {
+  initialize,
+  pageOwner,
+  pruneHistory,
+  latestVersion,
+  findExisting,
+  saveProposal,
+  newSession,
+} from '../../src/storage/repository';
+import { contentExample } from '../../src/services/ai/cooking';
+import { identity } from '../../src/domain/rules';
+import Dexie from 'dexie';
+import { CookDatabase } from '../../src/storage/db';
+
+it('v1原库升级保留对话和问答，并通过新索引只取当前制作最近10条', async () => {
+  const name = `upgrade-${crypto.randomUUID()}`;
+  const old = new Dexie(name);
+  old.version(1).stores({
+    recipes: 'id, &[source+identity], source, *aliases',
+    versions: 'id, recipeId, [recipeId+number], createdAt',
+    sessions: 'id, recipeId, versionId, createdAt',
+    timers: 'id, sessionId, [sessionId+targetType+targetId]',
+    conversations: 'id, lastSentAt',
+    cookingMessages: 'id, sessionId, createdAt',
+    models: 'id',
+    credentials: 'modelId',
+    tasks: 'id, status, contextId, owner',
+    settings: 'id',
+  });
+  const upgraded = new CookDatabase(name);
+  try {
+    const conversation = {
+      id: 'c',
+      title: '旧对话',
+      createdAt: 1,
+      lastSentAt: 2,
+      messages: [{ id: 'm', role: 'user', text: '保留用量400g', createdAt: 1 }],
+    };
+    await old.table('conversations').put(conversation);
+    await old.table('cookingMessages').bulkPut(
+      Array.from({ length: 100 }, (_, index) => ({
+        id: `m${index}`,
+        sessionId: index % 2 ? 's' : 'other',
+        role: 'user',
+        text: `${index}`,
+        createdAt: index,
+      })),
+    );
+    old.close();
+    await upgraded.open();
+    expect(upgraded.verno).toBe(2);
+    expect(await upgraded.conversations.get('c')).toEqual(conversation);
+    expect(await upgraded.cookingMessages.count()).toBe(100);
+    const rows = await upgraded.cookingMessages
+      .where('[sessionId+createdAt]')
+      .between(['s', -Infinity], ['s', Infinity])
+      .reverse()
+      .limit(10)
+      .toArray();
+    expect(rows.map((row) => row.createdAt)).toEqual([99, 97, 95, 93, 91, 89, 87, 85, 83, 81]);
+  } finally {
+    old.close();
+    await upgraded.delete();
+  }
+});
+
+it('100个历史版本只读取最新正文，分配新版本号保留旧版父引用', async () => {
+  await db.recipes.put({
+    id: 'r',
+    source: 'ai',
+    identity: identity(contentExample.title),
+    name: contentExample.title,
+    aliases: ['家传炒蛋'],
+    createdAt: 0,
+  });
+  await db.versions.bulkPut(
+    Array.from({ length: 100 }, (_, i) => ({
+      id: `v${i + 1}`,
+      recipeId: 'r',
+      number: i + 1,
+      parentId: i ? `v${i}` : null,
+      content: structuredClone(contentExample),
+      change: '历史',
+      createdAt: i,
+    })),
+  );
+  await db.sessions.put({ ...newSession('r', 'v1'), id: 's', progressKnown: true });
+  await db.cookingMessages.put({
+    id: 'm',
+    sessionId: 's',
+    role: 'assistant',
+    text: '延长时间',
+    createdAt: 0,
+    baseVersionId: 'v1',
+    baseRevision: 0,
+    proposalStatus: 'pending',
+    answer: {
+      text: '',
+      confirmations: [],
+      proposal: {
+        explanation: '延长时间',
+        ingredients: [],
+        prep: [],
+        steps: [{ ...contentExample.steps[1], seconds: 300 }],
+      },
+    },
+  });
+  const read: string[] = [];
+  const reading = (version: { id: string }) => {
+    read.push(version.id);
+    return version;
+  };
+  db.versions.hook('reading', reading);
+  try {
+    expect((await latestVersion('r'))?.number).toBe(100);
+    expect(read).toEqual(['v100']);
+    read.length = 0;
+    expect((await findExisting(contentExample.title))?.version.number).toBe(100);
+    expect(read).toEqual(['v100']);
+    expect((await findExisting('家传炒蛋'))?.version.number).toBe(100);
+    read.length = 0;
+    await saveProposal('m');
+    expect(read).toEqual(['v1', 'v100']);
+  } finally {
+    db.versions.hook('reading').unsubscribe(reading);
+  }
+  const saved = await latestVersion('r');
+  expect(saved?.number).toBe(101);
+  expect(saved?.parentId).toBe('v1');
+});
 
 it('历史清理保持30天边界，只删除过期记录且空清理不写入', async () => {
   const now = Date.now();
