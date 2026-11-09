@@ -145,12 +145,14 @@ describe('正式数据不变量', () => {
     });
     await deleteSession(session.id);
     expect(await db.versions.count()).toBe(1);
+    expect(await db.versionSummaries.count()).toBe(1);
     expect(await db.timers.count()).toBe(0);
     expect(await db.cookingMessages.count()).toBe(0);
     expect(await db.sessions.get(next.id)).toBeDefined();
     await deleteSession(next.id);
     expect(await db.recipes.count()).toBe(0);
     expect(await db.versions.count()).toBe(0);
+    expect(await db.versionSummaries.count()).toBe(0);
   });
   it('确认调整建立新版本，只更新本次制作，重复确认不可二次应用', async () => {
     const { session } = await create();
@@ -180,6 +182,8 @@ describe('正式数据不变量', () => {
     await saveProposal(messageId);
     const current = await db.sessions.get(session.id);
     expect(current?.versionId).not.toBe(session.versionId);
+    expect((await db.versionSummaries.get(current!.versionId))?.number).toBe(2);
+    expect((await db.versionSummaries.get(session.versionId))?.number).toBe(1);
     expect((await db.sessions.get(other.id))?.versionId).toBe(session.versionId);
     expect((await db.versions.get(session.versionId))?.content.ingredients[3].quantity).toBe(2);
     expect(await db.versions.count()).toBe(2);
@@ -213,6 +217,8 @@ describe('正式数据不变量', () => {
     expect(await db.versions.count()).toBe(1);
     expect(await db.sessions.count()).toBe(2);
     expect(await db.recipes.where('source').equals('ai').count()).toBe(0);
+    expect(await db.versionSummaries.count()).toBe(1);
+    expect((await db.sessions.toArray()).every((s) => s.source === 'catalog')).toBe(true);
   });
   it('计时目标区分备菜和步骤，同一目标误触不重复启动', async () => {
     const { session } = await create();

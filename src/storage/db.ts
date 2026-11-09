@@ -2,6 +2,7 @@ import Dexie, { type Table } from 'dexie';
 import type {
   Recipe,
   RecipeVersion,
+  VersionSummary,
   CookingSession,
   Timer,
   Conversation,
@@ -15,6 +16,7 @@ import type {
 export class CookDatabase extends Dexie {
   recipes!: Table<Recipe>;
   versions!: Table<RecipeVersion>;
+  versionSummaries!: Table<VersionSummary>;
   sessions!: Table<CookingSession>;
   timers!: Table<Timer>;
   conversations!: Table<Conversation>;
@@ -39,6 +41,14 @@ export class CookDatabase extends Dexie {
     });
     this.version(2).stores({
       cookingMessages: 'id, sessionId, createdAt, [sessionId+createdAt]',
+    });
+    this.version(3).stores({
+      versionSummaries: 'id, recipeId',
+      sessions: 'id, recipeId, versionId, createdAt, [source+createdAt+id]',
+    });
+    this.on('populate', (transaction) => {
+      // Only upgraded databases contain snapshots that predate the list projection.
+      void transaction.table('settings').put({ id: 'recipeListReady-v3', value: true });
     });
   }
 }

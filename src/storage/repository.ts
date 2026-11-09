@@ -1,4 +1,5 @@
 import Dexie from 'dexie';
+import { addVersion } from './recipeList';
 import { db, setting, setSetting } from './db';
 import {
   isRetiredDeepSeek,
@@ -37,10 +38,15 @@ const previousReloadOwner =
     ?.type === 'reload'
     ? sessionStorage.getItem('cookpilot-owner')
     : null;
-export const newSession = (recipeId: string, versionId: string): CookingSession => ({
+export const newSession = (
+  recipeId: string,
+  versionId: string,
+  source: Recipe['source'] = 'ai',
+): CookingSession => ({
   id: uid(),
   recipeId,
   versionId,
+  source,
   checked: [],
   currentCard: 0,
   execution: [],
@@ -78,15 +84,19 @@ export async function reuseRecipe(
   name: string,
   preferences: Preferences,
 ): Promise<CookingSession | undefined> {
-  return db.transaction('rw', [db.recipes, db.versions, db.sessions], async () => {
-    const existing = await findExisting(name);
-    if (!existing) return;
-    const conflict = restrictionConflict(existing.version.content, preferences);
-    if (conflict) throw new Error(conflict);
-    const session = existing.session ?? newSession(existing.recipe.id, existing.version.id);
-    await db.sessions.put({ ...session, currentCard: 0 });
-    return { ...session, currentCard: 0 };
-  });
+  return db.transaction(
+    'rw',
+    [db.recipes, db.versions, db.versionSummaries, db.sessions],
+    async () => {
+      const existing = await findExisting(name);
+      if (!existing) return;
+      const conflict = restrictionConflict(existing.version.content, preferences);
+      if (conflict) throw new Error(conflict);
+      const session = existing.session ?? newSession(existing.recipe.id, existing.version.id);
+      await db.sessions.put({ ...session, currentCard: 0 });
+      return { ...session, currentCard: 0 };
+    },
+  );
 }
 export async function commitGeneration(
   taskId: string,
@@ -97,91 +107,101 @@ export async function commitGeneration(
   const content = validateContent(input, preferences);
   if (identity(content.title) !== identity(candidate.name))
     throw new Error('生成的菜名与所选菜品不一致，请重试');
-  return db.transaction('rw', [db.tasks, db.recipes, db.versions, db.sessions], async () => {
-    const task = await db.tasks.get(taskId);
-    if (task?.status === 'done' && task.resultSessionId) {
-      const result = await db.sessions.get(task.resultSessionId);
-      if (!result) throw new Error('制作记录已被删除');
-      return result;
-    }
-    if (!task || !['pending', 'failed'].includes(task.status))
-      throw new Error('生成任务已取消或中断，结果未保存');
-    const existing = await findExisting(candidate.name);
-    let session: CookingSession;
-    if (existing) {
-      const conflict = restrictionConflict(existing.version.content, preferences);
-      if (conflict) throw new Error(conflict);
-      session = existing.session ?? newSession(existing.recipe.id, existing.version.id);
-      await db.sessions.put(session);
-    } else {
-      const recipe: Recipe = {
-        id: uid(),
-        identity: identity(candidate.name),
-        name: content.title,
-        aliases: [],
-        source: 'ai',
-        createdAt: Date.now(),
-      };
-      const version: RecipeVersion = {
-        id: uid(),
-        recipeId: recipe.id,
-        number: 1,
-        parentId: null,
-        content,
-        preferences: structuredClone(preferences),
-        change: '首次生成',
-        createdAt: Date.now(),
-      };
-      session = newSession(recipe.id, version.id);
-      await db.recipes.add(recipe);
-      await db.versions.add(version);
-      await db.sessions.add(session);
-    }
-    await db.tasks.update(taskId, {
-      status: 'done',
-      resultSessionId: session.id,
-      resultContent: undefined,
-    });
-    return session;
-  });
+  return db.transaction(
+    'rw',
+    [db.tasks, db.recipes, db.versions, db.versionSummaries, db.sessions],
+    async () => {
+      const task = await db.tasks.get(taskId);
+      if (task?.status === 'done' && task.resultSessionId) {
+        const result = await db.sessions.get(task.resultSessionId);
+        if (!result) throw new Error('制作记录已被删除');
+        return result;
+      }
+      if (!task || !['pending', 'failed'].includes(task.status))
+        throw new Error('生成任务已取消或中断，结果未保存');
+      const existing = await findExisting(candidate.name);
+      let session: CookingSession;
+      if (existing) {
+        const conflict = restrictionConflict(existing.version.content, preferences);
+        if (conflict) throw new Error(conflict);
+        session = existing.session ?? newSession(existing.recipe.id, existing.version.id);
+        await db.sessions.put(session);
+      } else {
+        const recipe: Recipe = {
+          id: uid(),
+          identity: identity(candidate.name),
+          name: content.title,
+          aliases: [],
+          source: 'ai',
+          createdAt: Date.now(),
+        };
+        const version: RecipeVersion = {
+          id: uid(),
+          recipeId: recipe.id,
+          number: 1,
+          parentId: null,
+          content,
+          preferences: structuredClone(preferences),
+          change: '首次生成',
+          createdAt: Date.now(),
+        };
+        session = newSession(recipe.id, version.id);
+        await db.recipes.add(recipe);
+        await addVersion(version);
+        await db.sessions.add(session);
+      }
+      await db.tasks.update(taskId, {
+        status: 'done',
+        resultSessionId: session.id,
+        resultContent: undefined,
+      });
+      return session;
+    },
+  );
 }
 export async function openBuiltin(
   builtin: BuiltinRecipe,
   preferences: Preferences,
 ): Promise<CookingSession> {
   const content = validateContent(builtin.content, preferences, false);
-  return db.transaction('rw', [db.recipes, db.versions, db.sessions], async () => {
-    const recipeId = `catalog-${builtin.id}`;
-    const versionId = `${recipeId}-v${builtin.contentVersion}`;
-    if (!(await db.recipes.get(recipeId)))
-      await db.recipes.add({
-        id: recipeId,
-        identity: identity(content.title),
-        name: content.title,
-        aliases: content.aliases,
-        source: 'catalog',
-        createdAt: Date.now(),
-      });
-    if (!(await db.versions.get(versionId)))
-      await db.versions.add({
-        id: versionId,
-        recipeId,
-        number: builtin.contentVersion,
-        parentId: null,
-        content,
-        change: `预置资料 ${builtin.sourceNumber}`,
-        createdAt: Date.now(),
-      });
-    const session = newSession(recipeId, versionId);
-    await db.sessions.add(session);
-    return session;
-  });
+  return db.transaction(
+    'rw',
+    [db.recipes, db.versions, db.versionSummaries, db.sessions],
+    async () => {
+      const recipeId = `catalog-${builtin.id}`;
+      const versionId = `${recipeId}-v${builtin.contentVersion}`;
+      if (!(await db.recipes.get(recipeId)))
+        await db.recipes.add({
+          id: recipeId,
+          identity: identity(content.title),
+          name: content.title,
+          aliases: content.aliases,
+          source: 'catalog',
+          createdAt: Date.now(),
+        });
+      if (!(await db.versions.get(versionId)))
+        await addVersion({
+          id: versionId,
+          recipeId,
+          number: builtin.contentVersion,
+          parentId: null,
+          content,
+          change: `预置资料 ${builtin.sourceNumber}`,
+          createdAt: Date.now(),
+        });
+      const session = newSession(recipeId, versionId, 'catalog');
+      await db.sessions.add(session);
+      return session;
+    },
+  );
 }
 export async function cookAgain(id: string): Promise<CookingSession> {
-  return db.transaction('rw', db.sessions, async () => {
+  return db.transaction('rw', [db.sessions, db.recipes], async () => {
     const previous = await db.sessions.get(id);
     if (!previous) throw new Error('原制作记录不存在');
-    const session = newSession(previous.recipeId, previous.versionId);
+    const source = previous.source ?? (await db.recipes.get(previous.recipeId))?.source;
+    if (!source) throw new Error('原菜谱不存在');
+    const session = newSession(previous.recipeId, previous.versionId, source);
     await db.sessions.add(session);
     return session;
   });
@@ -189,7 +209,15 @@ export async function cookAgain(id: string): Promise<CookingSession> {
 export async function deleteSession(id: string): Promise<void> {
   await db.transaction(
     'rw',
-    [db.sessions, db.timers, db.cookingMessages, db.recipes, db.versions, db.tasks],
+    [
+      db.sessions,
+      db.timers,
+      db.cookingMessages,
+      db.recipes,
+      db.versions,
+      db.versionSummaries,
+      db.tasks,
+    ],
     async () => {
       const session = await db.sessions.get(id);
       if (!session) return;
@@ -205,6 +233,7 @@ export async function deleteSession(id: string): Promise<void> {
       // Retain the entire parent chain while any session references this recipe.
       if (!(await db.sessions.where('recipeId').equals(session.recipeId).count())) {
         await db.versions.where('recipeId').equals(session.recipeId).delete();
+        await db.versionSummaries.where('recipeId').equals(session.recipeId).delete();
         await db.recipes.delete(session.recipeId);
       }
     },
@@ -213,7 +242,7 @@ export async function deleteSession(id: string): Promise<void> {
 export async function saveProposal(messageId: string): Promise<void> {
   await db.transaction(
     'rw',
-    [db.cookingMessages, db.sessions, db.versions, db.recipes, db.settings],
+    [db.cookingMessages, db.sessions, db.versions, db.versionSummaries, db.recipes, db.settings],
     async () => {
       const message = await db.cookingMessages.get(messageId);
       if (!message || message.proposalStatus !== 'pending' || !message.answer?.proposal)
@@ -255,7 +284,7 @@ export async function saveProposal(messageId: string): Promise<void> {
         change: message.answer.proposal.explanation,
         createdAt: Date.now(),
       };
-      await db.versions.add(version);
+      await addVersion(version);
       await db.sessions.update(session.id, {
         versionId: version.id,
         revision: session.revision + 1,

@@ -160,11 +160,15 @@ export type RecipeVersion = {
   change: string;
   createdAt: number;
 };
+export type VersionSummary = Pick<RecipeVersion, 'id' | 'recipeId' | 'number'> &
+  Pick<Content, 'title' | 'minutes' | 'conditions'> & { searchText: string };
 export type Execution = { targetType: 'prep' | 'step'; targetId: string; confirmedAt: number };
 export type CookingSession = {
   id: string;
   recipeId: string;
   versionId: string;
+  // Absent only in databases awaiting the resumable v3 list backfill.
+  source?: Recipe['source'];
   checked: string[];
   currentCard: number;
   execution: Execution[];

@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useDeferredValue, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpen,
   ChefHat,
@@ -12,7 +12,8 @@ import {
   X,
 } from 'lucide-react';
 import { useApp } from '../../app/context';
-import { useSessions } from '../../app/data';
+import { prepareRecipeList, readRecipeList } from '../../storage/recipeList';
+import { usePageLimit } from '../../shared/usePageLimit';
 import { useCatalog } from '../../shared/useCatalog';
 import { usePagedItems } from '../../shared/usePagedItems';
 import { cookAgain, deleteSession, openBuiltin } from '../../storage/repository';
@@ -24,7 +25,6 @@ import { ActionButton } from '../../shared/ActionButton';
 export function RecipePages({ ai = false }: { ai?: boolean }) {
   const app = useApp();
   const { data } = app;
-  const allSessions = useSessions() ?? [];
   const catalog = useCatalog(!ai);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('全部');
@@ -35,29 +35,22 @@ export function RecipePages({ ai = false }: { ai?: boolean }) {
     () => deferredSearch.toLowerCase().trim().split(/\s+/).filter(Boolean),
     [deferredSearch],
   );
-  const recipeIds = useMemo(
-    () => new Set(data.recipes.filter((r) => r.source === 'ai').map((r) => r.id)),
-    [data.recipes],
+  const savedPage = usePageLimit(deferredSearch);
+  const saved = useLiveQuery(
+    () => (ai ? readRecipeList(savedPage.limit, tokens) : undefined),
+    [ai, savedPage.limit, tokens],
   );
-  const aiSessions = useMemo(
-    () =>
-      ai
-        ? allSessions
-            .filter((s) => recipeIds.has(s.recipeId))
-            .sort((a, b) => b.createdAt - a.createdAt)
-        : [],
-    [ai, allSessions, recipeIds],
-  );
-  const versionIds = useMemo(() => [...new Set(aiSessions.map((s) => s.versionId))], [aiSessions]);
-  const versions = useLiveQuery(
-    async () =>
-      new Map(
-        (await db.versions.bulkGet(versionIds))
-          .filter((v) => v !== undefined)
-          .map((v) => [v.id, v]),
-      ),
-    [versionIds],
-  );
+  const [indexError, setIndexError] = useState<Error>();
+  useEffect(() => {
+    if (!ai) return;
+    let active = true;
+    void prepareRecipeList().catch((error: Error) => {
+      if (active) setIndexError(error);
+    });
+    return () => {
+      active = false;
+    };
+  }, [ai]);
   const builtinIndex = useMemo(
     () =>
       ai
@@ -79,21 +72,7 @@ export function RecipePages({ ai = false }: { ai?: boolean }) {
         .map((item) => item.recipe),
     [builtinIndex, category, tokens],
   );
-  const sessions = useMemo(
-    () =>
-      aiSessions.filter((s) => {
-        const content = versions?.get(s.versionId)?.content;
-        return (
-          content &&
-          tokens.every((t) =>
-            `${content.title} ${content.aliases.join(' ')}`.toLowerCase().includes(t),
-          )
-        );
-      }),
-    [aiSessions, versions, tokens],
-  );
   const builtinPage = usePagedItems(builtins, `${category}:${deferredSearch}`);
-  const savedPage = usePagedItems(sessions, deferredSearch);
   const builtinRows = useMemo(
     () =>
       builtinPage.visible.map((recipe) => (
@@ -122,8 +101,8 @@ export function RecipePages({ ai = false }: { ai?: boolean }) {
   );
   const savedRows = useMemo(
     () =>
-      savedPage.visible.map((session) => {
-        const version = versions!.get(session.versionId)!;
+      (saved?.rows ?? []).map((session) => {
+        const { version } = session;
         return (
           <article className="saved-recipe" key={session.id}>
             <div className="saved-recipe-heading">
@@ -131,14 +110,14 @@ export function RecipePages({ ai = false }: { ai?: boolean }) {
                 <ChefHat size={25} strokeWidth={1.4} />
               </span>
               <div className="row-copy">
-                <h2>{version.content.title}</h2>
+                <h2>{version.title}</h2>
                 <span>
-                  <Clock3 size={12} /> {version.content.minutes} 分钟 · v{version.number} ·{' '}
+                  <Clock3 size={12} /> {version.minutes} 分钟 · v{version.number} ·{' '}
                   {new Date(session.createdAt).toLocaleDateString('zh-CN')}
                 </span>
               </div>
             </div>
-            <p className="muted small">{version.content.conditions}</p>
+            <p className="muted small">{version.conditions}</p>
             {session.note && <p className="note-preview">{session.note}</p>}
             <div className="row-actions">
               <ActionButton
@@ -165,7 +144,7 @@ export function RecipePages({ ai = false }: { ai?: boolean }) {
               </ActionButton>
               <button
                 className="icon-button muted"
-                aria-label={`删除${version.content.title}制作记录`}
+                aria-label={`删除${version.title}制作记录`}
                 onClick={() => setDeleting(session.id)}
               >
                 <Trash2 size={16} />
@@ -174,9 +153,10 @@ export function RecipePages({ ai = false }: { ai?: boolean }) {
           </article>
         );
       }),
-    [savedPage.visible, versions, app.safe, app.navigate],
+    [saved, app.safe, app.navigate],
   );
-  if (ai ? !versions : !catalog)
+  if (indexError) throw indexError;
+  if (ai ? !saved : !catalog)
     return (
       <div className="boot" role="status">
         <LoaderCircle className="spin" size={24} />
@@ -236,14 +216,16 @@ export function RecipePages({ ai = false }: { ai?: boolean }) {
         )}
         {ai && (
           <>
-            <p className="list-count">{sessions.length} 条制作记录</p>
+            <p className="list-count">{saved!.total} 条制作记录</p>
             {savedRows}
-            {savedPage.hasMore && (
-              <div className="list-sentinel" ref={savedPage.sentinel} aria-hidden="true" />
-            )}
+            {saved!.hasMore &&
+              saved!.limit === savedPage.limit &&
+              saved!.query === tokens.join('\0') && (
+                <div className="list-sentinel" ref={savedPage.sentinel} aria-hidden="true" />
+              )}
           </>
         )}
-        {(ai ? !sessions.length : !builtins.length) && (
+        {(ai ? !saved!.total : !builtins.length) && (
           <div className="empty-state">
             <BookOpen size={32} strokeWidth={1.3} />
             <p>{search ? '没有匹配的菜谱' : '还没有 AI 菜谱'}</p>

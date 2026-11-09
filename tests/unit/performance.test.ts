@@ -13,17 +13,21 @@ import { contentExample } from '../../src/services/ai/cooking';
 import { identity } from '../../src/domain/rules';
 import Dexie from 'dexie';
 import { CookDatabase } from '../../src/storage/db';
+import { backfillRecipeListBatch } from '../../src/storage/recipeList';
 
-it('v1原库升级保留对话和问答，并通过新索引只取当前制作最近10条', async () => {
+it.each([1, 2])('v%i原库升级保留对话、问答和制作记录，列表回填可恢复', async (schemaVersion) => {
   const name = `upgrade-${crypto.randomUUID()}`;
   const old = new Dexie(name);
-  old.version(1).stores({
+  old.version(schemaVersion).stores({
     recipes: 'id, &[source+identity], source, *aliases',
     versions: 'id, recipeId, [recipeId+number], createdAt',
     sessions: 'id, recipeId, versionId, createdAt',
     timers: 'id, sessionId, [sessionId+targetType+targetId]',
     conversations: 'id, lastSentAt',
-    cookingMessages: 'id, sessionId, createdAt',
+    cookingMessages:
+      schemaVersion === 1
+        ? 'id, sessionId, createdAt'
+        : 'id, sessionId, createdAt, [sessionId+createdAt]',
     models: 'id',
     credentials: 'modelId',
     tasks: 'id, status, contextId, owner',
@@ -39,6 +43,25 @@ it('v1原库升级保留对话和问答，并通过新索引只取当前制作�
       messages: [{ id: 'm', role: 'user', text: '保留用量400g', createdAt: 1 }],
     };
     await old.table('conversations').put(conversation);
+    await old.table('recipes').put({
+      id: 'r',
+      source: 'ai',
+      identity: '旧菜谱',
+      name: '旧菜谱',
+      aliases: [],
+      createdAt: 0,
+    });
+    await old.table('versions').put({
+      id: 'v',
+      recipeId: 'r',
+      number: 1,
+      parentId: null,
+      content: contentExample,
+      change: '旧版本',
+      createdAt: 0,
+    });
+    const session = { ...newSession('r', 'v'), source: undefined };
+    await old.table('sessions').put(session);
     await old.table('cookingMessages').bulkPut(
       Array.from({ length: 100 }, (_, index) => ({
         id: `m${index}`,
@@ -50,7 +73,19 @@ it('v1原库升级保留对话和问答，并通过新索引只取当前制作�
     );
     old.close();
     await upgraded.open();
-    expect(upgraded.verno).toBe(2);
+    expect(upgraded.verno).toBe(3);
+    expect(await upgraded.versionSummaries.count()).toBe(0);
+    expect((await upgraded.settings.get('recipeListReady-v3'))?.value).not.toBe(true);
+    await backfillRecipeListBatch(upgraded);
+    upgraded.close();
+    await upgraded.open();
+    expect((await upgraded.settings.get('recipeListBackfill-v3'))?.value).toMatchObject({
+      versionsAfter: 'v',
+      versionsDone: true,
+    });
+    expect(await backfillRecipeListBatch(upgraded)).toBe(true);
+    expect((await upgraded.versionSummaries.get('v'))?.title).toBe(contentExample.title);
+    expect(await upgraded.sessions.get(session.id)).toEqual({ ...session, source: 'ai' });
     expect(await upgraded.conversations.get('c')).toEqual(conversation);
     expect(await upgraded.cookingMessages.count()).toBe(100);
     const rows = await upgraded.cookingMessages

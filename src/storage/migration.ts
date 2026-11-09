@@ -10,6 +10,7 @@ import {
 } from '../domain/schema';
 import { identity, isExpired } from '../domain/rules';
 import { saveModel } from './repository';
+import { addVersion } from './recipeList';
 import { isRetiredDeepSeek } from '../services/ai/providers';
 
 // One-time same-origin migration only. The untouched original is backed up first.
@@ -183,7 +184,7 @@ export async function migrateLegacy(): Promise<void> {
         });
       const existingVersions = await db.versions.where('recipeId').equals(recipeId).toArray();
       const number = Math.max(guide.version, 1, ...existingVersions.map((v) => v.number + 1));
-      await db.versions.add({
+      await addVersion({
         id: versionId,
         recipeId,
         number,
@@ -196,6 +197,7 @@ export async function migrateLegacy(): Promise<void> {
         id: guide.id,
         recipeId,
         versionId,
+        source: guide.source,
         checked: guide.checked,
         currentCard: guide.currentCard ?? guide.currentStep + 1,
         execution: guide.completed.map((targetId) => ({
