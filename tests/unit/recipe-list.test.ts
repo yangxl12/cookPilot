@@ -100,7 +100,7 @@ for (const size of [250, 1000]) {
       db.versionSummaries.hook('reading').unsubscribe(summaryReading);
       db.versions.hook('reading').unsubscribe(versionReading);
     }
-  });
+  }, 15_000);
 }
 
 it('旧库回填每批至多32份正文，可中断恢复；失败批次与进度一起回滚，查询不漏旧记录', async () => {

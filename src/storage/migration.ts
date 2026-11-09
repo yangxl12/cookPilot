@@ -11,6 +11,7 @@ import {
 import { identity, isExpired } from '../domain/rules';
 import { saveModel } from './repository';
 import { addVersion } from './recipeList';
+import { saveConversation } from './searchIndex';
 import { isRetiredDeepSeek } from '../services/ai/providers';
 
 // One-time same-origin migration only. The untouched original is backed up first.
@@ -247,30 +248,34 @@ export async function migrateLegacy(): Promise<void> {
       if (!Number.isFinite(lastSentAt) || !Number.isFinite(createdAt))
         throw new Error('旧对话日期无效，迁移已回滚');
       if (isExpired(lastSentAt)) continue;
-      await db.conversations.add({
-        id: conversation.id,
-        title: conversation.title,
-        createdAt,
-        lastSentAt,
-        messages: conversation.turns.flatMap((turn) => [
-          { id: `${turn.id}-user`, role: 'user' as const, text: turn.prompt, createdAt },
-          {
-            id: `${turn.id}-assistant`,
-            role: 'assistant' as const,
-            text: turn.result?.text ?? '旧请求已中断，可重新发送。',
-            status: turn.result ? ('done' as const) : ('interrupted' as const),
-            createdAt,
-            candidates: turn.result?.candidates?.map((c) => ({
-              name: c.recipe.title,
-              aliases: [],
-              minutes: c.recipe.minutes,
-              difficulty: c.recipe.level === '有点挑战' ? ('有点挑战' as const) : ('简单' as const),
-              summary: '',
-              blocked: c.blocked ?? '',
-            })),
-          },
-        ]),
-      });
+      await saveConversation(
+        {
+          id: conversation.id,
+          title: conversation.title,
+          createdAt,
+          lastSentAt,
+          messages: conversation.turns.flatMap((turn) => [
+            { id: `${turn.id}-user`, role: 'user' as const, text: turn.prompt, createdAt },
+            {
+              id: `${turn.id}-assistant`,
+              role: 'assistant' as const,
+              text: turn.result?.text ?? '旧请求已中断，可重新发送。',
+              status: turn.result ? ('done' as const) : ('interrupted' as const),
+              createdAt,
+              candidates: turn.result?.candidates?.map((c) => ({
+                name: c.recipe.title,
+                aliases: [],
+                minutes: c.recipe.minutes,
+                difficulty:
+                  c.recipe.level === '有点挑战' ? ('有点挑战' as const) : ('简单' as const),
+                summary: '',
+                blocked: c.blocked ?? '',
+              })),
+            },
+          ]),
+        },
+        true,
+      );
     }
     if (legacy.activeConversationId && (await db.conversations.get(legacy.activeConversationId)))
       await setSetting('activeConversationId', legacy.activeConversationId);

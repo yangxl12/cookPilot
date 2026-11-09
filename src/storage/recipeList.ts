@@ -1,6 +1,7 @@
 import Dexie from 'dexie';
 import { db, type CookDatabase } from './db';
 import type { RecipeVersion, VersionSummary } from '../domain/schema';
+import { indexVersion } from './searchIndex';
 
 const progressKey = 'recipeListBackfill-v3';
 const readyKey = 'recipeListReady-v3';
@@ -17,14 +18,16 @@ export function summarizeVersion(version: RecipeVersion): VersionSummary {
     minutes,
     conditions,
     searchText: `${title} ${aliases.join(' ')}`.toLowerCase(),
+    change: version.change,
   };
 }
 
 /** Keep the immutable snapshot and its list projection in the same transaction. */
 export function addVersion(version: RecipeVersion) {
-  return db.transaction('rw', [db.versions, db.versionSummaries], async () => {
+  return db.transaction('rw', [db.versions, db.versionSummaries, db.versionSearch], async () => {
     await db.versions.add(version);
     await db.versionSummaries.add(summarizeVersion(version));
+    await db.versionSearch.add(indexVersion(version));
   });
 }
 

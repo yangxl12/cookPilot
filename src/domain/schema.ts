@@ -161,7 +161,11 @@ export type RecipeVersion = {
   createdAt: number;
 };
 export type VersionSummary = Pick<RecipeVersion, 'id' | 'recipeId' | 'number'> &
-  Pick<Content, 'title' | 'minutes' | 'conditions'> & { searchText: string };
+  Pick<Content, 'title' | 'minutes' | 'conditions'> & { searchText: string; change?: string };
+export type SearchText = { body: string; searchText: string };
+export type VersionSearch = Pick<RecipeVersion, 'id' | 'recipeId'> &
+  Pick<Content, 'title'> &
+  SearchText;
 export type Execution = { targetType: 'prep' | 'step'; targetId: string; confirmedAt: number };
 export type CookingSession = {
   id: string;
@@ -206,6 +210,8 @@ export type Conversation = {
   createdAt: number;
   lastSentAt: number;
 };
+export type ConversationSummary = Omit<Conversation, 'messages'> & { questionCount: number };
+export type ConversationSearch = Pick<Conversation, 'id' | 'title' | 'lastSentAt'> & SearchText;
 export type CookingMessage = {
   id: string;
   sessionId: string;

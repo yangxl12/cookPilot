@@ -2,14 +2,14 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Search, X } from 'lucide-react';
 import { useApp, type Route } from '../../app/context';
-import { useSessions } from '../../app/data';
 import { catalogSync, loadCatalog } from '../../assets/recipes';
-import { contentSearchText, isExpired } from '../../domain/rules';
-import type { BuiltinRecipe, Content } from '../../domain/schema';
+import { contentSearchText } from '../../domain/rules';
+import type { BuiltinRecipe, SearchText } from '../../domain/schema';
 import { db, setSetting } from '../../storage/db';
 import { openBuiltin } from '../../storage/repository';
 import { PageHeader } from '../../shared/PageHeader';
 import { usePagedItems } from '../../shared/usePagedItems';
+import { prepareSearchIndex, readSearchIndex, searchableText } from '../../storage/searchIndex';
 
 const sources = [
   { id: 'ai', label: 'AI 菜谱' },
@@ -20,26 +20,14 @@ type Source = (typeof sources)[number]['id'];
 type SearchResult = {
   id: string;
   title: string;
-  body: string;
+  parts: SearchText[];
   source: Source;
   route?: Route;
   builtin?: BuiltinRecipe;
   conversationId?: string;
-  searchText: string;
 };
 
 const EMPTY: never[] = [];
-
-// Recipe versions are immutable once written, so their flattened search text never changes.
-const versionText = new Map<string, string>();
-function searchTextFor(versionId: string, content: Content): string {
-  let text = versionText.get(versionId);
-  if (text === undefined) {
-    text = contentSearchText(content);
-    versionText.set(versionId, text);
-  }
-  return text;
-}
 
 /**
  * The bundled catalog is static, so its search text is built at most once per page lifetime.
@@ -54,10 +42,9 @@ function catalogIndex(): SearchResult[] | null {
     return {
       id: recipe.id,
       title: recipe.content.title,
-      body,
+      parts: [searchableText(`${recipe.content.title} ${body}`)],
       source: 'catalog' as const,
       builtin: recipe,
-      searchText: `${recipe.content.title} ${body}`.toLowerCase(),
     };
   }));
 }
@@ -92,8 +79,6 @@ function snippet(body: string, terms: string[]) {
 
 export function SearchPage() {
   const app = useApp();
-  const { recipes } = app.data;
-  const sessions = useSessions() ?? [];
   const [query, setQuery] = useState(initialSearch);
   const input = useRef<HTMLInputElement>(null);
   const deferredQuery = useDeferredValue(query);
@@ -102,8 +87,20 @@ export function SearchPage() {
     [deferredQuery],
   );
   const active = terms.length > 0;
-  const versions = useLiveQuery(() => db.versions.toArray(), []);
-  const conversations = useLiveQuery(() => db.conversations.toArray(), []);
+  const stored = useLiveQuery(() => (active ? readSearchIndex() : undefined), [active]);
+  const [indexError, setIndexError] = useState<Error>();
+  useEffect(() => {
+    if (!active) return;
+    let mounted = true;
+    void Promise.all([prepareSearchIndex('version'), prepareSearchIndex('conversation')]).catch(
+      (error: Error) => {
+        if (mounted) setIndexError(error);
+      },
+    );
+    return () => {
+      mounted = false;
+    };
+  }, [active]);
   const [builtins, setBuiltins] = useState<SearchResult[]>(() => catalogIndex() ?? EMPTY);
   const [catalogError, setCatalogError] = useState<Error>();
   useEffect(() => {
@@ -149,62 +146,23 @@ export function SearchPage() {
   }, [query]);
 
   const all = useMemo<SearchResult[]>(() => {
-    const aiIds = new Set(
-      recipes.filter((recipe) => recipe.source === 'ai').map((recipe) => recipe.id),
-    );
-    const byId = new Map(versions?.map((version) => [version.id, version]));
-    const changes = new Map<string, string[]>();
-    for (const version of versions ?? []) {
-      const list = changes.get(version.recipeId) ?? [];
-      list.push(version.change);
-      changes.set(version.recipeId, list);
-    }
-    const results: Omit<SearchResult, 'searchText'>[] = [
-      ...sessions
-        .filter((session) => aiIds.has(session.recipeId))
-        .sort((a, b) => b.createdAt - a.createdAt)
-        .flatMap((session): Omit<SearchResult, 'searchText'>[] => {
-          const version = byId.get(session.versionId);
-          if (!version) return [];
-          return [
-            {
-              id: session.id,
-              title: version.content.title,
-              body: `${searchTextFor(version.id, version.content)} ${session.note} ${changes.get(session.recipeId)?.join(' ') ?? ''}`,
-              source: 'ai',
-              route: { page: 'cook', sessionId: session.id },
-            },
-          ];
-        }),
-      ...(conversations ?? [])
-        .filter((conversation) => !isExpired(conversation.lastSentAt))
-        .sort((a, b) => b.lastSentAt - a.lastSentAt)
-        .map((conversation) => ({
-          id: conversation.id,
-          title: conversation.title,
-          body: conversation.messages
-            .map(
-              (message) =>
-                `${message.text} ${message.candidates?.map((recipe) => `${recipe.name} ${recipe.summary}`).join(' ') ?? ''}`,
-            )
-            .join(' '),
-          source: 'conversations' as const,
-          conversationId: conversation.id,
-        })),
-    ];
     return [
-      ...results.map((result) => ({
+      ...(stored ?? []).map((result) => ({
         ...result,
-        searchText: `${result.title} ${result.body}`.toLowerCase(),
+        ...(result.source === 'ai'
+          ? { route: { page: 'cook' as const, sessionId: result.id } }
+          : { conversationId: result.id }),
       })),
       ...builtins,
     ];
-  }, [recipes, versions, sessions, conversations, builtins]);
+  }, [stored, builtins]);
 
   const matches = useMemo(
     () =>
       terms.length
-        ? all.filter((result) => terms.every((term) => result.searchText.includes(term)))
+        ? all.filter((result) =>
+            terms.every((term) => result.parts.some((part) => part.searchText.includes(term))),
+          )
         : [],
     [all, terms],
   );
@@ -236,6 +194,7 @@ export function SearchPage() {
   );
 
   if (catalogError) throw catalogError;
+  if (indexError) throw indexError;
 
   return (
     <>
@@ -276,7 +235,9 @@ export function SearchPage() {
           </form>
         </div>
 
-        {active && <SearchResults matches={matches} terms={terms} onSelect={select} />}
+        {active && stored !== undefined && (
+          <SearchResults matches={matches} terms={terms} onSelect={select} />
+        )}
       </main>
     </>
   );
@@ -336,7 +297,11 @@ function SearchGroup({
             <Highlight text={result.title} terms={terms} pattern={pattern} />
           </strong>
           <p>
-            <Highlight text={snippet(result.body, terms)} terms={terms} pattern={pattern} />
+            <Highlight
+              text={snippet(result.parts.map((p) => p.body).join(' '), terms)}
+              terms={terms}
+              pattern={pattern}
+            />
           </p>
         </button>
       ))}

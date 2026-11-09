@@ -1,5 +1,6 @@
 import Dexie from 'dexie';
 import { addVersion } from './recipeList';
+import { changeConversation, conversationTables } from './searchIndex';
 import { db, setting, setSetting } from './db';
 import {
   isRetiredDeepSeek,
@@ -86,7 +87,7 @@ export async function reuseRecipe(
 ): Promise<CookingSession | undefined> {
   return db.transaction(
     'rw',
-    [db.recipes, db.versions, db.versionSummaries, db.sessions],
+    [db.recipes, db.versions, db.versionSummaries, db.versionSearch, db.sessions],
     async () => {
       const existing = await findExisting(name);
       if (!existing) return;
@@ -109,7 +110,7 @@ export async function commitGeneration(
     throw new Error('生成的菜名与所选菜品不一致，请重试');
   return db.transaction(
     'rw',
-    [db.tasks, db.recipes, db.versions, db.versionSummaries, db.sessions],
+    [db.tasks, db.recipes, db.versions, db.versionSummaries, db.versionSearch, db.sessions],
     async () => {
       const task = await db.tasks.get(taskId);
       if (task?.status === 'done' && task.resultSessionId) {
@@ -166,7 +167,7 @@ export async function openBuiltin(
   const content = validateContent(builtin.content, preferences, false);
   return db.transaction(
     'rw',
-    [db.recipes, db.versions, db.versionSummaries, db.sessions],
+    [db.recipes, db.versions, db.versionSummaries, db.versionSearch, db.sessions],
     async () => {
       const recipeId = `catalog-${builtin.id}`;
       const versionId = `${recipeId}-v${builtin.contentVersion}`;
@@ -216,6 +217,7 @@ export async function deleteSession(id: string): Promise<void> {
       db.recipes,
       db.versions,
       db.versionSummaries,
+      db.versionSearch,
       db.tasks,
     ],
     async () => {
@@ -234,6 +236,7 @@ export async function deleteSession(id: string): Promise<void> {
       if (!(await db.sessions.where('recipeId').equals(session.recipeId).count())) {
         await db.versions.where('recipeId').equals(session.recipeId).delete();
         await db.versionSummaries.where('recipeId').equals(session.recipeId).delete();
+        await db.versionSearch.where('recipeId').equals(session.recipeId).delete();
         await db.recipes.delete(session.recipeId);
       }
     },
@@ -242,7 +245,15 @@ export async function deleteSession(id: string): Promise<void> {
 export async function saveProposal(messageId: string): Promise<void> {
   await db.transaction(
     'rw',
-    [db.cookingMessages, db.sessions, db.versions, db.versionSummaries, db.recipes, db.settings],
+    [
+      db.cookingMessages,
+      db.sessions,
+      db.versions,
+      db.versionSummaries,
+      db.versionSearch,
+      db.recipes,
+      db.settings,
+    ],
     async () => {
       const message = await db.cookingMessages.get(messageId);
       if (!message || message.proposalStatus !== 'pending' || !message.answer?.proposal)
@@ -360,13 +371,15 @@ export async function toggleTimer(id: string): Promise<void> {
   });
 }
 export async function pruneHistory(time = Date.now()): Promise<void> {
-  await db.transaction('rw', [db.conversations, db.settings], async () => {
+  await db.transaction('rw', [...conversationTables, db.settings], async () => {
     const expired = await db.conversations
       .where('lastSentAt')
       .below(time - 30 * 86400000)
       .primaryKeys();
     if (!expired.length) return;
     await db.conversations.bulkDelete(expired);
+    await db.conversationSummaries.bulkDelete(expired);
+    await db.conversationSearch.bulkDelete(expired);
     const active = await setting<string | null>('activeConversationId', null);
     if (active !== null && expired.includes(active)) await setSetting('activeConversationId', null);
   });
@@ -477,29 +490,28 @@ async function repairInterruptedTasks(): Promise<void> {
       interrupted.add(task.id);
       await db.tasks.update(task.id, { status: 'interrupted' });
       if (task.kind === 'recommend')
-        await db.conversations
-          .where('id')
-          .equals(task.contextId)
-          .modify((c) => {
-            for (const m of c.messages)
-              if (m.status === 'pending' && (!m.taskId || m.taskId === task.id)) {
-                m.status = 'interrupted';
-                m.text = '请求已中断，请重新发送。';
-              }
-          });
+        await changeConversation(task.contextId, (c) => {
+          for (const m of c.messages)
+            if (m.status === 'pending' && (!m.taskId || m.taskId === task.id)) {
+              m.status = 'interrupted';
+              m.text = '请求已中断，请重新发送。';
+            }
+        });
     }
   }
   const activeTaskIds = new Set(
     pending.filter((task) => !interrupted.has(task.id)).map((task) => task.id),
   );
-  await db.conversations
+  const orphaned = await db.conversations
     .filter((c) =>
       c.messages.some(
         (message) =>
           message.status === 'pending' && (!message.taskId || !activeTaskIds.has(message.taskId)),
       ),
     )
-    .modify((c) => {
+    .toArray();
+  for (const conversation of orphaned) {
+    await changeConversation(conversation.id, (c) => {
       for (const message of c.messages) {
         if (
           message.status === 'pending' &&
@@ -510,6 +522,7 @@ async function repairInterruptedTasks(): Promise<void> {
         }
       }
     });
+  }
 }
 async function pruneLeases(): Promise<void> {
   await db.transaction('rw', db.settings, async () => {
@@ -580,22 +593,19 @@ export async function createTask(
   return task;
 }
 export async function cancelTask(id: string) {
-  await db.transaction('rw', [db.tasks, db.conversations], async () => {
+  await db.transaction('rw', [db.tasks, ...conversationTables], async () => {
     const task = await db.tasks.get(id);
     if (task && ['pending', 'failed'].includes(task.status)) {
       await db.tasks.update(id, { status: 'cancelled', resultContent: undefined });
       if (task.kind === 'recommend')
-        await db.conversations
-          .where('id')
-          .equals(task.contextId)
-          .modify((c) => {
-            for (const message of c.messages) {
-              if (message.status === 'pending' && (!message.taskId || message.taskId === id)) {
-                message.status = 'interrupted';
-                message.text = '请求已取消，可继续发送。';
-              }
+        await changeConversation(task.contextId, (c) => {
+          for (const message of c.messages) {
+            if (message.status === 'pending' && (!message.taskId || message.taskId === id)) {
+              message.status = 'interrupted';
+              message.text = '请求已取消，可继续发送。';
             }
-          });
+          }
+        });
     }
   });
 }

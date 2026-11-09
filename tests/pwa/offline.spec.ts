@@ -1,8 +1,9 @@
 import { test, expect } from '@playwright/test';
 import realRecommendation from '../fixtures/deepseek-flash-recommendation.json' with { type: 'json' };
 
-test('正式构建使用最新 DeepSeek 快速配置，原始辣椒炒牛肉响应显示三道候选并持久保存', async ({
+test('正式构建使用最新 DeepSeek 快速配置，三道候选持久保存且支持离线搜索恢复', async ({
   page,
+  context,
 }) => {
   let requests = 0;
   await page.route('https://api.deepseek.com/**', async (route) => {
@@ -38,6 +39,17 @@ test('正式构建使用最新 DeepSeek 快速配置，原始辣椒炒牛肉响�
   await expect(page.locator('.recommendation').filter({ hasText: '杭椒牛柳' })).toContainText(
     '适中',
   );
+  await page.evaluate(async () => {
+    await navigator.serviceWorker.ready;
+  });
+  await page.reload();
+  await page.waitForFunction(() => !!navigator.serviceWorker.controller);
+  await context.setOffline(true);
+  await page.goto('./#search?q=杭椒牛柳');
+  const conversations = page.getByRole('region', { name: '对话历史搜索结果' });
+  await expect(conversations.getByRole('button')).toHaveCount(1);
+  await conversations.getByRole('button').click();
+  await expect(page.locator('.recommendation')).toHaveCount(3);
   expect(requests).toBe(1);
 });
 

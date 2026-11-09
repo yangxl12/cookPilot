@@ -15,6 +15,11 @@ import {
 import { useApp } from '../../app/context';
 import { db, setSetting } from '../../storage/db';
 import {
+  changeConversation,
+  conversationTables,
+  saveConversation,
+} from '../../storage/searchIndex';
+import {
   commitGeneration,
   findExisting,
   reuseRecipe,
@@ -119,7 +124,7 @@ export function Home() {
     const id = conversation?.id ?? uid();
     const assistantId = uid();
     await app.work('正在分析…', 'recommend', id, async ({ task, model, signal, valid }) => {
-      await db.transaction('rw', [db.conversations, db.settings], async () => {
+      await db.transaction('rw', [...conversationTables, db.settings], async () => {
         const previous = await db.conversations.get(id);
         const current: Conversation = previous ?? {
           id,
@@ -140,7 +145,7 @@ export function Home() {
             createdAt: Date.now(),
           },
         );
-        await db.conversations.put(current);
+        await saveConversation(current);
         await setSetting('activeConversationId', id);
       });
       clear();
@@ -166,7 +171,7 @@ export function Home() {
           signal,
         );
         if (!valid()) return;
-        await db.transaction('rw', [db.tasks, db.conversations], async () => {
+        await db.transaction('rw', [db.tasks, ...conversationTables], async () => {
           if ((await db.tasks.get(task.id))?.status !== 'pending') return;
           const current = await db.conversations.get(id);
           if (!current) return;
@@ -175,25 +180,22 @@ export function Home() {
               ? { ...m, text: result.text, candidates: result.candidates, status: 'done' }
               : m,
           );
-          await db.conversations.put(current);
+          await saveConversation(current);
           await db.tasks.update(task.id, { status: 'done' });
         });
       } catch (error) {
         const cancelled = signal.aborted && !(signal.reason instanceof TaskTimeoutError);
-        await db.conversations
-          .where('id')
-          .equals(id)
-          .modify((c) => {
-            c.messages = c.messages.map((m) =>
-              m.id === assistantId
-                ? {
-                    ...m,
-                    status: cancelled ? 'interrupted' : 'failed',
-                    text: cancelled ? '请求已取消，可继续发送。' : '分析失败，可重新发送。',
-                  }
-                : m,
-            );
-          });
+        await changeConversation(id, (c) => {
+          c.messages = c.messages.map((m) =>
+            m.id === assistantId
+              ? {
+                  ...m,
+                  status: cancelled ? 'interrupted' : 'failed',
+                  text: cancelled ? '请求已取消，可继续发送。' : '分析失败，可重新发送。',
+                }
+              : m,
+          );
+        });
         throw error;
       }
     });

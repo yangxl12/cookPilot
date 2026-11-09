@@ -73,7 +73,7 @@ it.each([1, 2])('v%i原库升级保留对话、问答和制作记录，列表回
     );
     old.close();
     await upgraded.open();
-    expect(upgraded.verno).toBe(3);
+    expect(upgraded.verno).toBe(4);
     expect(await upgraded.versionSummaries.count()).toBe(0);
     expect((await upgraded.settings.get('recipeListReady-v3'))?.value).not.toBe(true);
     await backfillRecipeListBatch(upgraded);

@@ -2,8 +2,8 @@ import { useEffect, type Ref } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { BookOpen, ChefHat, ChevronRight, Search, Settings2, X } from 'lucide-react';
 import { useApp } from '../../app/context';
-import { db, setSetting } from '../../storage/db';
-import { isExpired } from '../../domain/rules';
+import { setSetting } from '../../storage/db';
+import { prepareSearchIndex, readConversationHistory } from '../../storage/searchIndex';
 
 export function Drawer({
   open,
@@ -33,17 +33,17 @@ export function Drawer({
       inert={!open}
       tabIndex={-1}
     >
-      {!hidden && <DrawerBody onClose={onClose} />}
+      {!hidden && <DrawerBody open={open} onClose={onClose} />}
     </aside>
   );
 }
 
-function DrawerBody({ onClose }: { onClose: () => void }) {
+function DrawerBody({ open, onClose }: { open: boolean; onClose: () => void }) {
   const app = useApp();
-  const conversations =
-    useLiveQuery(() => db.conversations.orderBy('lastSentAt').reverse().limit(14).toArray(), []) ??
-    [];
-  const recent = conversations.filter((conversation) => !isExpired(conversation.lastSentAt));
+  useEffect(() => {
+    if (open) void app.safe(() => prepareSearchIndex('conversation'));
+  }, [open, app.safe]);
+  const recent = useLiveQuery(() => (open ? readConversationHistory(14) : undefined), [open]) ?? [];
   const go = (page: 'search' | 'recipes' | 'ai-recipes' | 'settings') => {
     onClose();
     void app.navigate({ page });
