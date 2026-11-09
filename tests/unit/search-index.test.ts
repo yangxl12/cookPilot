@@ -136,7 +136,7 @@ it('心得更新不重建不可变版本索引，候选更新和取消同步更�
   });
   expect(matched(await readSearchIndex(), '候选独有摘要')).toHaveLength(0);
   await cancelTask(task.id);
-  expect((await db.conversationSearch.get('chat'))?.body).toContain('请求已取消');
+  expect((await db.messageSearch.toArray()).map((m) => m.body).join(' ')).toContain('请求已取消');
   expect((await db.conversationSummaries.get('chat'))?.questionCount).toBe(1);
 });
 
@@ -239,7 +239,7 @@ it('v3升级后分批回填可在关闭重开后恢复，失败批次和游标�
       );
     old.close();
     await upgraded.open();
-    expect(upgraded.verno).toBe(4);
+    expect(upgraded.verno).toBe(5);
     expect(await upgraded.versions.count()).toBe(65);
     expect((await upgraded.settings.get('versionSearchReady-v4'))?.value).not.toBe(true);
     const fail = () => {
@@ -340,6 +340,8 @@ it('陈旧请求恢复会同步替换对话搜索中的等待文本', async () =
     ],
   });
   await initialize();
-  expect((await db.conversationSearch.get('chat'))?.body).toContain('请求已中断');
-  expect((await db.conversationSearch.get('chat'))?.body).not.toContain('旧等待专属词');
+  expect((await db.messageSearch.toArray()).map((m) => m.body).join(' ')).toContain('请求已中断');
+  expect((await db.messageSearch.toArray()).map((m) => m.body).join(' ')).not.toContain(
+    '旧等待专属词',
+  );
 });

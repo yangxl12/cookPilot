@@ -98,7 +98,8 @@ export function prepareRecipeList(): Promise<void> {
   }));
 }
 
-export async function readRecipeList(limit: number, tokens: string[]) {
+export type RecipeCursor = { createdAt: number; id: string };
+export async function readRecipeList(limit: number, tokens: string[], before?: RecipeCursor) {
   return db.transaction(
     'r',
     [db.settings, db.recipes, db.sessions, db.versions, db.versionSummaries],
@@ -128,15 +129,35 @@ export async function readRecipeList(limit: number, tokens: string[]) {
         const ordered = ready
           ? db.sessions
               .where('[source+createdAt+id]')
-              .between(['ai', Dexie.minKey], ['ai', Dexie.maxKey])
+              .between(
+                ['ai', Dexie.minKey],
+                before ? ['ai', before.createdAt, before.id] : ['ai', Dexie.maxKey],
+                true,
+                !before,
+              )
               .reverse()
           : db.sessions
               .orderBy('createdAt')
               .reverse()
-              .filter((s) => aiIds!.has(s.recipeId));
+              .filter(
+                (s) =>
+                  aiIds!.has(s.recipeId) &&
+                  (!before ||
+                    s.createdAt < before.createdAt ||
+                    (s.createdAt === before.createdAt && s.id < before.id)),
+              );
         return matched ? ordered.filter((s) => matched.has(s.versionId)) : ordered;
       };
-      const total = await collection().count();
+      const all = db.sessions
+        .where('[source+createdAt+id]')
+        .between(['ai', Dexie.minKey], ['ai', Dexie.maxKey]);
+      const total = before
+        ? ready
+          ? await (matched ? all.filter((s) => matched.has(s.versionId)) : all).count()
+          : await db.sessions
+              .filter((s) => aiIds!.has(s.recipeId) && (!matched || matched.has(s.versionId)))
+              .count()
+        : await collection().count();
       const sessions = await collection()
         .limit(limit + 1)
         .toArray();

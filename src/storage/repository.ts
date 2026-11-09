@@ -1,6 +1,7 @@
+import { migrateConversation, updateMessage, messageTables } from './messages';
 import Dexie from 'dexie';
 import { addVersion } from './recipeList';
-import { changeConversation, conversationTables } from './searchIndex';
+import { conversationTables } from './searchIndex';
 import { db, setting, setSetting } from './db';
 import {
   isRetiredDeepSeek,
@@ -8,8 +9,8 @@ import {
   retiredModelMessage,
 } from '../services/ai/providers';
 import {
-  defaultPreferences,
   uid,
+  defaultPreferences,
   type Recipe,
   type RecipeVersion,
   type CookingSession,
@@ -24,7 +25,6 @@ import {
 } from '../domain/schema';
 import {
   identity,
-  nameMatches,
   validateContent,
   applyPatch,
   restrictionConflict,
@@ -72,14 +72,19 @@ export async function findExisting(
     .first();
   const recipe =
     exact ??
-    (await db.recipes.where('source').equals('ai').toArray()).find((r) =>
-      nameMatches(name, [r.name, ...r.aliases]),
-    );
+    (await db.recipes
+      .where('nameKeys')
+      .equals(identity(name))
+      .filter((r) => r.source === 'ai')
+      .first());
   if (!recipe) return;
   const version = await latestVersion(recipe.id);
   if (!version) return;
-  const sessions = await db.sessions.where('versionId').equals(version.id).toArray();
-  return { recipe, version, session: sessions.sort((a, b) => b.createdAt - a.createdAt)[0] };
+  const session = await db.sessions
+    .where('[versionId+createdAt+id]')
+    .between([version.id, Dexie.minKey], [version.id, Dexie.maxKey])
+    .last();
+  return { recipe, version, session };
 }
 export async function reuseRecipe(
   name: string,
@@ -375,14 +380,52 @@ export async function pruneHistory(time = Date.now()): Promise<void> {
     const expired = await db.conversations
       .where('lastSentAt')
       .below(time - 30 * 86400000)
+      .limit(32)
       .primaryKeys();
     if (!expired.length) return;
+    for (const id of expired) {
+      await db.conversationMessages.where('conversationId').equals(id).delete();
+      await db.messageSearch.where('conversationId').equals(id).delete();
+      await db.settings.delete(`messagesAfter-v5:${id}`);
+    }
     await db.conversations.bulkDelete(expired);
     await db.conversationSummaries.bulkDelete(expired);
     await db.conversationSearch.bulkDelete(expired);
     const active = await setting<string | null>('activeConversationId', null);
     if (active !== null && expired.includes(active)) await setSetting('activeConversationId', null);
   });
+  await pruneTasks(time);
+}
+
+export async function pruneTasks(time = Date.now()) {
+  for (const status of ['done', 'cancelled', 'interrupted', 'failed'] as const) {
+    await db.transaction('rw', [db.tasks, db.conversationMessages, db.settings], async () => {
+      const key = `tasksCleanupCursor-v5:${status}`;
+      const cursor = await setting<{ createdAt: number; id: string } | undefined>(key, undefined);
+      const tasks = await db.tasks
+        .where('[status+createdAt+id]')
+        .between(
+          cursor ? [status, cursor.createdAt, cursor.id] : [status, Dexie.minKey],
+          [status, time - 30 * 86400000, Dexie.minKey],
+          false,
+          false,
+        )
+        .limit(32)
+        .toArray();
+      for (const task of tasks) {
+        if (
+          task.resultContent ||
+          (await db.conversationMessages.where('taskId').equals(task.id).count())
+        )
+          continue;
+        await db.tasks.delete(task.id);
+      }
+      if (tasks.length === 32) {
+        const last = tasks.at(-1)!;
+        await setSetting(key, { createdAt: last.createdAt, id: last.id });
+      } else if (cursor) await db.settings.delete(key);
+    });
+  }
 }
 export async function saveModel(config: ModelConfig, key: string): Promise<void> {
   if (isRetiredDeepSeek(config)) throw new Error(retiredModelMessage);
@@ -420,43 +463,8 @@ export async function deleteModel(id: string) {
 }
 export async function exportData(): Promise<string> {
   await pruneHistory();
-  return db.transaction(
-    'r',
-    [
-      db.recipes,
-      db.versions,
-      db.sessions,
-      db.timers,
-      db.conversations,
-      db.cookingMessages,
-      db.models,
-      db.settings,
-    ],
-    async () =>
-      JSON.stringify(
-        {
-          schemaVersion: 1,
-          exportedAt: new Date().toISOString(),
-          recipes: await db.recipes.toArray(),
-          versions: await db.versions.toArray(),
-          sessions: await db.sessions.toArray(),
-          timers: await db.timers.toArray(),
-          conversations: await db.conversations.toArray(),
-          cookingMessages: await db.cookingMessages.toArray(),
-          models: (await db.models.toArray()).map((m) => ({
-            id: m.id,
-            name: m.name,
-            url: m.url,
-            model: m.model,
-            key: '[已隐藏]',
-          })),
-          preferences: await setting('preferences', defaultPreferences()),
-          activeModelId: await setting('activeModelId', ''),
-        },
-        null,
-        2,
-      ),
-  );
+  const { exportSnapshot } = await import('./exportSnapshot');
+  return (await exportSnapshot()).text();
 }
 export async function clearData(): Promise<void> {
   await db.transaction('rw', db.tables, async () => {
@@ -469,6 +477,7 @@ export async function clearData(): Promise<void> {
 }
 export async function initialize(): Promise<void> {
   await db.open();
+  await prepareRecipeNames();
   // Independent maintenance: run it together instead of one round trip after another.
   await Promise.all([updateDeepSeekModels(), pruneHistory(), repairInterruptedTasks()]);
   await pruneLeases();
@@ -477,52 +486,73 @@ export async function initialize(): Promise<void> {
   await setSetting(`lease:${pageOwner}`, Date.now());
   if (typeof sessionStorage !== 'undefined') sessionStorage.setItem('cookpilot-owner', pageOwner);
 }
+async function prepareRecipeNames() {
+  while (!(await setting('recipeNamesReady-v5', false))) {
+    const complete = await db.transaction('rw', [db.recipes, db.settings], async () => {
+      if (await setting('recipeNamesReady-v5', false)) return true;
+      const after = await setting<string | undefined>('recipeNamesAfter-v5', undefined);
+      const rows = await (after ? db.recipes.where(':id').above(after) : db.recipes.toCollection())
+        .limit(32)
+        .toArray();
+      for (const recipe of rows)
+        await db.recipes.update(recipe.id, {
+          nameKeys: [...new Set([recipe.name, ...recipe.aliases].map(identity))],
+        });
+      if (rows.length < 32) {
+        await setSetting('recipeNamesReady-v5', true);
+        await db.settings.delete('recipeNamesAfter-v5');
+        return true;
+      }
+      await setSetting('recipeNamesAfter-v5', rows.at(-1)!.id);
+      return false;
+    });
+    if (!complete) await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
 const staleBefore = () => Date.now() - 45000;
 // Pending requests in other live tabs remain valid. A stale document lease is interrupted.
 async function repairInterruptedTasks(): Promise<void> {
   const pending = await db.tasks.where('status').equals('pending').toArray();
-  // Nothing in flight means no conversation can hold a live pending message: skip the scan.
-  if (!pending.length) return;
-  const interrupted = new Set<string>();
   for (const task of pending) {
     const heartbeat = await setting<number>(`lease:${task.owner}`, 0);
-    if (task.owner === previousReloadOwner || heartbeat < staleBefore()) {
-      interrupted.add(task.id);
+    if (task.owner !== previousReloadOwner && heartbeat >= staleBefore()) continue;
+    if (task.kind === 'recommend') await migrateConversation(task.contextId);
+    await db.transaction('rw', [db.tasks, ...messageTables], async () => {
+      const fresh = await db.tasks.get(task.id);
+      if (fresh?.status !== 'pending') return;
       await db.tasks.update(task.id, { status: 'interrupted' });
-      if (task.kind === 'recommend')
-        await changeConversation(task.contextId, (c) => {
-          for (const m of c.messages)
-            if (m.status === 'pending' && (!m.taskId || m.taskId === task.id)) {
-              m.status = 'interrupted';
-              m.text = '请求已中断，请重新发送。';
-            }
-        });
-    }
-  }
-  const activeTaskIds = new Set(
-    pending.filter((task) => !interrupted.has(task.id)).map((task) => task.id),
-  );
-  const orphaned = await db.conversations
-    .filter((c) =>
-      c.messages.some(
-        (message) =>
-          message.status === 'pending' && (!message.taskId || !activeTaskIds.has(message.taskId)),
-      ),
-    )
-    .toArray();
-  for (const conversation of orphaned) {
-    await changeConversation(conversation.id, (c) => {
-      for (const message of c.messages) {
-        if (
-          message.status === 'pending' &&
-          (!message.taskId || !activeTaskIds.has(message.taskId))
-        ) {
-          message.status = 'interrupted';
-          message.text = '请求已中断，请重新发送。';
-        }
-      }
+      for (const message of await db.conversationMessages.where('taskId').equals(task.id).toArray())
+        if (message.status === 'pending')
+          await updateMessage(message.id, {
+            status: 'interrupted',
+            text: '请求已中断，请重新发送。',
+          });
+      // Old versions did not always attach a task ID to placeholders.
+      for (const message of await db.conversationMessages
+        .where('status')
+        .equals('pending')
+        .filter((m) => m.conversationId === task.contextId)
+        .toArray())
+        if (message.status === 'pending' && !message.taskId)
+          await updateMessage(message.id, {
+            status: 'interrupted',
+            text: '请求已中断，请重新发送。',
+          });
     });
   }
+  // Legacy orphan placeholders have no message-table index. Scan only once during
+  // the upgrade, without rewriting finished or live conversations.
+  if (!(await setting('messagesRecoveryReady-v5', false))) {
+    const orphans = await db.conversations
+      .filter((c) => c.messages?.some((m) => m.status === 'pending' && !m.taskId) ?? false)
+      .primaryKeys();
+    for (const id of orphans) await migrateConversation(String(id));
+    await setSetting('messagesRecoveryReady-v5', true);
+  }
+  const active = new Set(await db.tasks.where('status').equals('pending').primaryKeys());
+  for (const message of await db.conversationMessages.where('status').equals('pending').toArray())
+    if (!message.taskId || !active.has(message.taskId))
+      await updateMessage(message.id, { status: 'interrupted', text: '请求已中断，请重新发送。' });
 }
 async function pruneLeases(): Promise<void> {
   await db.transaction('rw', db.settings, async () => {
@@ -593,20 +623,24 @@ export async function createTask(
   return task;
 }
 export async function cancelTask(id: string) {
-  await db.transaction('rw', [db.tasks, ...conversationTables], async () => {
+  const previous = await db.tasks.get(id);
+  if (previous?.kind === 'recommend') await migrateConversation(previous.contextId);
+  await db.transaction('rw', [db.tasks, ...messageTables], async () => {
     const task = await db.tasks.get(id);
-    if (task && ['pending', 'failed'].includes(task.status)) {
-      await db.tasks.update(id, { status: 'cancelled', resultContent: undefined });
-      if (task.kind === 'recommend')
-        await changeConversation(task.contextId, (c) => {
-          for (const message of c.messages) {
-            if (message.status === 'pending' && (!message.taskId || message.taskId === id)) {
-              message.status = 'interrupted';
-              message.text = '请求已取消，可继续发送。';
-            }
-          }
+    if (!task || !['pending', 'failed'].includes(task.status)) return;
+    await db.tasks.update(id, { status: 'cancelled', resultContent: undefined });
+    if (task.kind !== 'recommend') return;
+    const rows = await db.conversationMessages
+      .where('status')
+      .equals('pending')
+      .filter((m) => m.conversationId === task.contextId)
+      .toArray();
+    for (const message of rows)
+      if (message.status === 'pending' && (!message.taskId || message.taskId === id))
+        await updateMessage(message.id, {
+          status: 'interrupted',
+          text: '请求已取消，可继续发送。',
         });
-    }
   });
 }
 export async function commitCookingMessage(taskId: string, message: CookingMessage) {

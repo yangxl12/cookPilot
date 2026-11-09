@@ -124,7 +124,10 @@ for (const size of [250, 1000]) {
     expect(reads.versionSummaries).toBe(24);
     await page.screenshot({ path: testInfo.outputPath(`ai-list-${size}.png`) });
     await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await expect(page.locator('.saved-recipe')).toHaveCount(48);
+    await expect.poll(() => page.locator('.saved-recipe').count()).toBeLessThanOrEqual(28);
+    await expect
+      .poll(() => page.locator('.window-list [data-row-id]').first().getAttribute('aria-setsize'))
+      .toBe('48');
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.getByRole('textbox', { name: '搜索菜名' }).fill('hidden secret');
     await expect(page.locator('.saved-recipe')).toHaveCount(1);
@@ -138,6 +141,26 @@ for (const size of [250, 1000]) {
         )
       ).versions ?? 0,
     ).toBe(0);
+    if (size === 1000) {
+      let loaded = 24;
+      while (loaded < size) {
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        await expect
+          .poll(async () =>
+            Number(
+              await page.locator('.window-list [data-row-id]').first().getAttribute('aria-setsize'),
+            ),
+          )
+          .toBeGreaterThan(loaded);
+        loaded = Number(
+          await page.locator('.window-list [data-row-id]').first().getAttribute('aria-setsize'),
+        );
+        expect(await page.locator('.saved-recipe').count()).toBeLessThanOrEqual(29);
+      }
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await expect(page.locator('.saved-recipe h2').last()).toHaveText('冷门藏菜');
+      await page.screenshot({ path: testInfo.outputPath('ai-list-bottom-1000.png') });
+    }
     // Switching to the static catalog must not subscribe to saved records or versions.
     await page.evaluate(() => {
       Object.assign(window, { listReads: {} });

@@ -50,7 +50,7 @@ test('正式构建：1000条消息与100个版本保持有限DOM，翻完历史�
     const now = Date.now();
     tx.objectStore('recipes').put({
       id: 'r',
-      identity: '番茄炒蛋',
+      identity: '西红柿炒鸡蛋',
       name: content.title,
       aliases: [],
       source: 'ai',

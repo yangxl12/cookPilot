@@ -14,7 +14,13 @@ export type Data = {
   activeModelId: string;
   activeConversationId: string | null;
 };
-export type Work = { task: Task; model: ModelSnapshot; signal: AbortSignal; valid: () => boolean };
+export type Work = {
+  task: Task;
+  model: ModelSnapshot;
+  signal: AbortSignal;
+  stage: (label: string) => void;
+  valid: () => boolean;
+};
 export type AppContext = {
   data: Data;
   route: Route;

@@ -1,3 +1,5 @@
+import { recordAiMetric } from './metrics';
+import { recentContext, summarizeRequirements } from './contextBudget';
 import { chat, ModelError, parseJson, type ChatMessage, type ModelSnapshot } from './client';
 import { referenceBlock, type Reference } from './search';
 import {
@@ -192,9 +194,15 @@ export async function recommend(
         content: `${base}
 职责：首页对话与推荐。做菜相关通常推荐3道候选；明确菜名时应包括指定菜。无关做菜则正常聊天，candidates=[]；不明确时简短澄清。
 候选只生成摘要，不生成完整菜谱。JSON格式：{"text":"简短回复","candidates":[{"name":"菜名","aliases":[],"minutes":20,"difficulty":"简单","summary":"特点与用料","blocked":"无法满足限制时说明，否则空字符串"}]}。
-偏好：${JSON.stringify(preferences)}。用户已有AI菜谱：${JSON.stringify(savedNames)}。不要因共享食材视为相同菜。`,
+明确用量与限制：${summarizeRequirements(
+          '',
+          history
+            .filter((m) => m.role === 'user')
+            .map((m) => m.content)
+            .join('\n'),
+        )}。偏好：${JSON.stringify(preferences)}。用户已有AI菜谱：${JSON.stringify(savedNames.filter((name) => history.slice(-4).some((m) => m.content.includes(name))).slice(0, 40))}。不要因共享食材视为相同菜。`,
       },
-      ...history.slice(-20),
+      ...recentContext(history),
     ],
     { signal, json: true, maxTokens: 1600 },
   );
@@ -211,11 +219,13 @@ export async function generate(
   explicitUserText = requirements,
   references: Reference[] = [],
 ): Promise<Content> {
+  const requirementsSummary = summarizeRequirements('', explicitUserText);
+  const recent = requirements.slice(-8000);
   const messages: ChatMessage[] = [
     { role: 'system', content: `${base}\n${contentRules}` },
     {
       role: 'user',
-      content: `只生成选中的一道菜：${candidate.name}。相关对话与本次要求：${requirements}。通用偏好：${JSON.stringify(preferences)}${references.length ? `\n${referenceBlock(references)}` : ''}`,
+      content: `只生成选中的一道菜：${candidate.name}。相关对话与本次要求：${recent}。明确用量与限制：${requirementsSummary}。通用偏好：${JSON.stringify(preferences)}${references.length ? `\n${referenceBlock(references)}` : ''}`,
     },
   ];
   let previous = '';
@@ -223,6 +233,7 @@ export async function generate(
     signal.throwIfAborted();
     previous = await chat(snapshot, messages, { signal, json: true, maxTokens: 6500 });
     signal.throwIfAborted();
+    const validating = performance.now();
     try {
       const content = normalizeGeneratedContent(parseJson(previous));
       const problems: string[] = [];
@@ -239,8 +250,20 @@ export async function generate(
       if (identity(content.title) !== identity(candidate.name))
         problems.push(`菜名必须为所选的“${candidate.name}”，不能改成“${content.title}”`);
       if (problems.length) throw new Error(problems.join('；'));
+      recordAiMetric({
+        stage: 'validation',
+        durationMs: performance.now() - validating,
+        outcome: 'success',
+        attempt: attempt + 1,
+      });
       return content;
     } catch (error) {
+      recordAiMetric({
+        stage: 'validation',
+        durationMs: performance.now() - validating,
+        outcome: 'failed',
+        attempt: attempt + 1,
+      });
       const explanation = contentError(error);
       if (attempt === 2) throw new Error(`菜谱内容校验未通过，未保存：${explanation}`);
       // Replace obsolete failures; each repair sees the original constraints and latest output.
@@ -292,7 +315,12 @@ export async function askCooking(
 严格用量规则：${contentRules}
 ${references.length ? `${referenceBlock(references, '仅用于回答品牌、设备、营养等菜谱之外的事实性问题；不得据此修改当前菜谱的做法、用量或步骤')}\n` : ''}当前阶段：${stage}。实际已确认执行记录：${JSON.stringify(session.execution)}。是否已明确确认进度：${JSON.stringify(session.progressKnown ?? false)}。
 当前版本内容：${JSON.stringify(content)}。通用偏好：${JSON.stringify(context.preferences)}。计时状态：${JSON.stringify(context.timers.map((t) => ({ name: t.name, status: t.status, deadline: t.deadline, remaining: t.remaining })))}。
-相关问答：${JSON.stringify(context.messages.slice(-10).map((m) => ({ role: m.role, text: m.text })))}。`,
+相关问答：${JSON.stringify(
+          recentContext(
+            context.messages.slice(-10).map((m) => ({ role: m.role, content: m.text })),
+            6000,
+          ),
+        )}。`,
       },
       { role: 'user', content: question },
     ],

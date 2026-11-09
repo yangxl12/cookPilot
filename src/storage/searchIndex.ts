@@ -1,3 +1,4 @@
+import { readConversation } from './messages';
 import Dexie from 'dexie';
 import { db, type CookDatabase } from './db';
 import { contentSearchText, isExpired } from '../domain/rules';
@@ -14,6 +15,8 @@ export const conversationTables = [
   db.conversations,
   db.conversationSummaries,
   db.conversationSearch,
+  db.conversationMessages,
+  db.messageSearch,
 ];
 const batchSize = 32;
 const readyKey = (kind: 'version' | 'conversation') => `${kind}SearchReady-v4`;
@@ -33,8 +36,12 @@ export function indexVersion(version: RecipeVersion): VersionSearch {
 }
 
 export function summarizeConversation(conversation: Conversation): ConversationSummary {
-  const { messages, ...summary } = conversation;
-  return { ...summary, questionCount: messages.filter((m) => m.role === 'user').length };
+  const { messages, requirements: _requirements, ...summary } = conversation;
+  return {
+    ...summary,
+    questionCount:
+      conversation.questionCount ?? (messages ?? []).filter((m) => m.role === 'user').length,
+  };
 }
 
 export function indexConversation(conversation: Conversation): ConversationSearch {
@@ -54,17 +61,28 @@ export function indexConversation(conversation: Conversation): ConversationSearc
 
 /** All application conversation writes share this atomic projection boundary. */
 export function saveConversation(conversation: Conversation, add = false) {
-  return db.transaction('rw', conversationTables, async () => {
-    if (add) await db.conversations.add(conversation);
-    else await db.conversations.put(conversation);
-    await db.conversationSummaries.put(summarizeConversation(conversation));
-    await db.conversationSearch.put(indexConversation(conversation));
+  return db.transaction('rw', [...conversationTables, db.settings], async () => {
+    // Compatibility boundary for legacy imports and bulk replacement. Interactive
+    // appends/completions use message-level writes from messages.ts instead.
+    const {
+      messageCount: _count,
+      questionCount: _questions,
+      requirements: _requirements,
+      ...legacy
+    } = conversation;
+    if (add) await db.conversations.add(legacy);
+    else await db.conversations.put(legacy);
+    await db.settings.delete(`messagesAfter-v5:${conversation.id}`);
+    await db.conversationMessages.where('conversationId').equals(conversation.id).delete();
+    await db.messageSearch.where('conversationId').equals(conversation.id).delete();
+    await db.conversationSummaries.put(summarizeConversation(legacy));
+    await db.conversationSearch.put(indexConversation(legacy));
   });
 }
 
 export function changeConversation(id: string, update: (conversation: Conversation) => void) {
-  return db.transaction('rw', conversationTables, async () => {
-    const conversation = await db.conversations.get(id);
+  return db.transaction('rw', [...conversationTables, db.settings], async () => {
+    const conversation = await readConversation(id);
     if (!conversation) return;
     update(conversation);
     await saveConversation(conversation);
@@ -108,7 +126,7 @@ export function backfillSearchBatch(kind: 'version' | 'conversation', database: 
           });
         }
       } else {
-        const conversations = rows as Conversation[];
+        const conversations = (rows as Conversation[]).filter((c) => c.messageCount === undefined);
         await database.conversationSearch.bulkPut(conversations.map(indexConversation));
         await database.conversationSummaries.bulkPut(conversations.map(summarizeConversation));
       }
@@ -155,6 +173,7 @@ export async function readSearchIndex(): Promise<StoredSearchResult[]> {
       db.versionSearch,
       db.conversations,
       db.conversationSearch,
+      db.messageSearch,
     ],
     async () => {
       const versionReady = (await db.settings.get(readyKey('version')))?.value === true;
@@ -190,6 +209,12 @@ export async function readSearchIndex(): Promise<StoredSearchResult[]> {
         : (await db.conversations.orderBy('lastSentAt').reverse().toArray())
             .filter((c) => !isExpired(c.lastSentAt))
             .map(indexConversation);
+      const messageParts = new Map<string, SearchText[]>();
+      for (const message of await db.messageSearch.toArray()) {
+        const parts = messageParts.get(message.conversationId) ?? [];
+        parts.push(message);
+        messageParts.set(message.conversationId, parts);
+      }
       return [
         ...sessions.flatMap((session): StoredSearchResult[] => {
           const version = versions.get(session.versionId);
@@ -211,7 +236,7 @@ export async function readSearchIndex(): Promise<StoredSearchResult[]> {
           id: c.id,
           title: c.title,
           source: 'conversations',
-          parts: [searchableText(c.title), c],
+          parts: [searchableText(c.title), c, ...(messageParts.get(c.id) ?? [])],
         })),
       ];
     },

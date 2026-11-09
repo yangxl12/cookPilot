@@ -8,7 +8,10 @@ import type { Data } from './context';
 // cooking sessions are read per page so that saving progress never refreshes the whole app.
 export function useAppData(): Data | undefined {
   const recipes = useLiveQuery(() => db.recipes.toArray(), []);
-  const timers = useLiveQuery(() => db.timers.toArray(), []);
+  const timers = useLiveQuery(
+    () => db.timers.where('status').anyOf('running', 'paused').toArray(),
+    [],
+  );
   const models = useLiveQuery(() => db.models.toArray(), []);
   const settings = useLiveQuery(
     () => db.settings.bulkGet(['preferences', 'activeModelId', 'activeConversationId']),

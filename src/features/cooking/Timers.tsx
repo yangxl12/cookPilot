@@ -17,10 +17,23 @@ export function Timers({ onClose }: { onClose: () => void }) {
   const [minutes, setMinutes] = useState('5');
   const [adding, setAdding] = useState(false);
   const sessionId = app.route.sessionId;
-  const sessionIds = useMemo(
-    () => [...new Set(app.data.timers.map((timer) => timer.sessionId))],
-    [app.data.timers],
+  const [donePage, setDonePage] = useState(0);
+  const completed = useLiveQuery(
+    () =>
+      db.timers
+        .where('[status+createdAt]')
+        .between(['done', -Infinity], ['done', Infinity])
+        .reverse()
+        .offset(donePage * 24)
+        .limit(25)
+        .toArray(),
+    [donePage],
   );
+  const timers = useMemo(
+    () => [...app.data.timers, ...(completed ?? []).slice(0, 24)],
+    [app.data.timers, completed],
+  );
+  const sessionIds = useMemo(() => [...new Set(timers.map((timer) => timer.sessionId))], [timers]);
   const sessions = useLiveQuery(
     async () =>
       new Map((await db.sessions.bulkGet(sessionIds)).flatMap((s) => (s ? [[s.id, s]] : []))),
@@ -28,10 +41,10 @@ export function Timers({ onClose }: { onClose: () => void }) {
   );
   return (
     <Sheet title="计时器" onClose={onClose}>
-      {!app.data.timers.length && (
+      {!timers.length && (
         <p className="empty-help">还没有计时。从备菜或步骤中启动，或添加一个计时。</p>
       )}
-      {app.data.timers.map((timer) => {
+      {timers.map((timer) => {
         const session = sessions?.get(timer.sessionId);
         const title = app.data.recipes.find((r) => r.id === session?.recipeId)?.name;
         const remaining = timerRemaining(timer, time);
@@ -70,6 +83,24 @@ export function Timers({ onClose }: { onClose: () => void }) {
           </div>
         );
       })}
+      {(donePage > 0 || (completed?.length ?? 0) > 24) && (
+        <div className="message-pagination">
+          <button
+            className="text-button"
+            disabled={donePage === 0}
+            onClick={() => setDonePage((p) => p - 1)}
+          >
+            较新计时
+          </button>
+          <button
+            className="text-button"
+            disabled={(completed?.length ?? 0) <= 24}
+            onClick={() => setDonePage((p) => p + 1)}
+          >
+            更早计时
+          </button>
+        </div>
+      )}
       {sessionId && (
         <form
           className="timer-form"

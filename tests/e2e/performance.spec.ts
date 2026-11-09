@@ -148,7 +148,15 @@ test('长列表随滚动补齐全部200道菜谱，搜索覆盖未渲染的记�
   await page.goto('/#search?q=1');
   await expect(page.locator('.search-result')).toHaveCount(24);
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-  await expect.poll(() => page.locator('.search-result').count()).toBeGreaterThanOrEqual(48);
+  await expect.poll(() => page.locator('.search-result').count()).toBeLessThanOrEqual(28);
+  await expect
+    .poll(() =>
+      page
+        .locator('.window-list [data-row-id]')
+        .last()
+        .evaluate((row) => row.getAttribute('aria-posinset') === row.getAttribute('aria-setsize')),
+    )
+    .toBe(true);
 });
 
 test('倒计时只刷新计时显示，隐藏时停止刷新，恢复时按截止时间完成且只通知一次', async ({ page }) => {

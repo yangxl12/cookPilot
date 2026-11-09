@@ -1,3 +1,4 @@
+import { recordAiMetric } from './metrics';
 import type { ModelSnapshot } from './client';
 import { isDeepSeek, searchEndpoint } from './providers';
 import { SEARCH_TIMEOUT_MS } from './budget';
@@ -52,6 +53,8 @@ export async function search(
 ): Promise<Reference[]> {
   options.signal?.throwIfAborted();
   if (!canSearch(snapshot) || !query.trim()) return [];
+  const started = performance.now();
+  let success = false;
   const maxChars = options.maxChars ?? 600;
   const controller = new AbortController();
   const abort = () => controller.abort(options.signal?.reason);
@@ -84,6 +87,7 @@ export async function search(
     controller.signal.throwIfAborted();
     const results: unknown = payload?.results;
     if (!Array.isArray(results)) return [];
+    success = true;
     return results.flatMap((item: Record<string, unknown>) => {
       const url = typeof item?.url === 'string' ? item.url.trim() : '';
       if (!/^https?:\/\//i.test(url)) return [];
@@ -101,6 +105,11 @@ export async function search(
     if (!timeout && controller.signal.aborted) throw new DOMException('请求已取消', 'AbortError');
     return [];
   } finally {
+    recordAiMetric({
+      stage: 'search',
+      durationMs: performance.now() - started,
+      outcome: options.signal?.aborted ? 'cancelled' : success ? 'success' : 'failed',
+    });
     clearTimeout(handle);
     options.signal?.removeEventListener('abort', abort);
   }

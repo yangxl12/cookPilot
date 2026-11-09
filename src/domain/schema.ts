@@ -147,6 +147,7 @@ export type Recipe = {
   identity: string;
   name: string;
   aliases: string[];
+  nameKeys?: string[];
   source: 'ai' | 'catalog';
   createdAt: number;
 };
@@ -209,8 +210,16 @@ export type Conversation = {
   messages: Message[];
   createdAt: number;
   lastSentAt: number;
+  questionCount?: number;
+  messageCount?: number;
+  requirements?: string;
 };
-export type ConversationSummary = Omit<Conversation, 'messages'> & { questionCount: number };
+export type ConversationMessage = Message & { conversationId: string; sequence: number };
+export type MessageSearch = SearchText & { id: string; conversationId: string };
+export type ConversationSummary = Pick<
+  Conversation,
+  'id' | 'title' | 'createdAt' | 'lastSentAt' | 'messageCount'
+> & { questionCount: number };
 export type ConversationSearch = Pick<Conversation, 'id' | 'title' | 'lastSentAt'> & SearchText;
 export type CookingMessage = {
   id: string;

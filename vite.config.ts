@@ -21,17 +21,8 @@ export default defineConfig({
   // Pages supplies /<repo>/; local development and root deployments default to /.
   base: process.env.VITE_BASE_PATH || '/',
   define: { __APP_BUILD__: JSON.stringify(appBuild) },
-  build: {
-    // The offline catalog ships as a separate JSON asset, so keep this about app code only.
-    chunkSizeWarningLimit: 700,
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (id.includes('node_modules')) return 'vendor';
-        },
-      },
-    },
-  },
+  build: { manifest: true },
+  worker: { format: 'es' },
   plugins: [
     react(),
     {

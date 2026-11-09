@@ -6,17 +6,29 @@ import { db, setSetting } from '../storage/db';
 import { cancelTask, createTask, initialize, pageOwner, pruneHistory } from '../storage/repository';
 import type { Task } from '../domain/schema';
 import { Home } from '../features/home/Home';
-import { HistorySheet } from '../features/home/Navigation';
 import { Drawer } from '../features/home/Drawer';
 import { useSideDrawer } from '../features/home/useSideDrawer';
 import { useAppData } from './data';
 import { useVisualViewport } from '../shared/useVisualViewport';
 import { TimerClock } from '../features/cooking/TimerClock';
-import { Timers } from '../features/cooking/Timers';
-import { ModelSwitch, PreferencesSheet, Settings } from '../features/settings/Settings';
-import { migrateLegacy } from '../storage/migration';
 import { PageBoundary } from '../shared/PageBoundary';
 import { startTaskBudget, TaskTimeoutError } from '../services/ai/budget';
+
+const HistorySheet = lazy(() =>
+  import('../features/home/Navigation').then((m) => ({ default: m.HistorySheet })),
+);
+const Timers = lazy(() =>
+  import('../features/cooking/Timers').then((m) => ({ default: m.Timers })),
+);
+const Settings = lazy(() =>
+  import('../features/settings/Settings').then((m) => ({ default: m.Settings })),
+);
+const ModelSwitch = lazy(() =>
+  import('../features/settings/PreferenceSheets').then((m) => ({ default: m.ModelSwitch })),
+);
+const PreferencesSheet = lazy(() =>
+  import('../features/settings/PreferenceSheets').then((m) => ({ default: m.PreferencesSheet })),
+);
 
 const SearchPage = lazy(() =>
   import('../features/search/SearchPage').then((m) => ({ default: m.SearchPage })),
@@ -133,6 +145,9 @@ export function App() {
           task,
           model,
           signal: request.controller.signal,
+          stage: (label) => {
+            if (active.current === request && !request.controller.signal.aborted) setBusy(label);
+          },
           valid: () => active.current === request && !request.controller.signal.aborted,
         };
         await operation(context);
@@ -186,7 +201,13 @@ export function App() {
   useEffect(() => {
     let alive = true;
     void initialize()
-      .then(migrateLegacy)
+      .then(async () => {
+        if (
+          localStorage.getItem('cookpilot.demo.v1') &&
+          !(await db.settings.get('legacyMigrated'))?.value
+        )
+          await (await import('../storage/migration')).migrateLegacy();
+      })
       .then(() => {
         if (alive) {
           setRoute(parseRoute());
@@ -364,10 +385,19 @@ export function App() {
             onClick={drawer.hide}
           />
         )}
-        {sheet === 'history' && <HistorySheet onClose={() => setSheet(null)} />}{' '}
-        {sheet === 'models' && <ModelSwitch onClose={() => setSheet(null)} />}{' '}
-        {sheet === 'preferences' && <PreferencesSheet onClose={() => setSheet(null)} />}{' '}
-        {sheet === 'timers' && <Timers onClose={() => setSheet(null)} />} <ToastHost />
+        <Suspense
+          fallback={
+            <div className="boot" role="status">
+              正在打开…
+            </div>
+          }
+        >
+          {sheet === 'history' && <HistorySheet onClose={() => setSheet(null)} />}{' '}
+          {sheet === 'models' && <ModelSwitch onClose={() => setSheet(null)} />}{' '}
+          {sheet === 'preferences' && <PreferencesSheet onClose={() => setSheet(null)} />}{' '}
+          {sheet === 'timers' && <Timers onClose={() => setSheet(null)} />}
+        </Suspense>
+        <ToastHost />
       </div>
     </Context.Provider>
   );

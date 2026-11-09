@@ -1,3 +1,5 @@
+import { recordAiMetric } from './metrics';
+import { checkInputBudget } from './contextBudget';
 import type { ModelConfig } from '../../domain/schema';
 import {
   isDeepSeek,
@@ -25,6 +27,7 @@ export async function chat(
   messages: ChatMessage[],
   options: { signal?: AbortSignal; json?: boolean; maxTokens?: number; timeoutMs?: number } = {},
 ): Promise<string> {
+  checkInputBudget(messages);
   options.signal?.throwIfAborted();
   if (isRetiredDeepSeek(snapshot)) throw new ModelError(retiredModelMessage);
   let service: URL;
@@ -43,6 +46,8 @@ export async function chat(
       !['localhost', '127.0.0.1', '[::1]'].includes(service.hostname))
   )
     throw new ModelError('请输入有效的 HTTPS 接口地址（本机服务可使用 HTTP）');
+  const started = performance.now();
+  let outcome: 'success' | 'failed' | 'cancelled' = 'failed';
   const controller = new AbortController();
   const abort = () => controller.abort(options.signal?.reason);
   options.signal?.addEventListener('abort', abort, { once: true });
@@ -123,6 +128,7 @@ export async function chat(
     const content = choice?.message?.content;
     if (typeof content !== 'string' || !content.trim())
       throw new ModelError('模型返回空内容，请重试');
+    outcome = 'success';
     return content.trim();
   } catch (error) {
     if (options.signal?.aborted && options.signal.reason?.name === 'AbortError')
@@ -137,6 +143,13 @@ export async function chat(
       `连接 ${service.host} 失败。请检查网络或代理能否访问该地址；跨域被拦截时也会如此`,
     );
   } finally {
+    if (options.signal?.aborted) outcome = 'cancelled';
+    recordAiMetric({
+      stage: 'model',
+      durationMs: performance.now() - started,
+      outcome,
+      inputChars: JSON.stringify(messages).length,
+    });
     clearTimeout(handle);
     options.signal?.removeEventListener('abort', abort);
   }

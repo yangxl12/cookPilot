@@ -1,3 +1,4 @@
+import { identity } from '../domain/names';
 import Dexie, { type Table } from 'dexie';
 import type {
   Recipe,
@@ -5,6 +6,8 @@ import type {
   VersionSummary,
   VersionSearch,
   ConversationSummary,
+  ConversationMessage,
+  MessageSearch,
   ConversationSearch,
   CookingSession,
   Timer,
@@ -26,6 +29,8 @@ export class CookDatabase extends Dexie {
   sessions!: Table<CookingSession>;
   timers!: Table<Timer>;
   conversations!: Table<Conversation>;
+  conversationMessages!: Table<ConversationMessage>;
+  messageSearch!: Table<MessageSearch>;
   cookingMessages!: Table<CookingMessage>;
   models!: Table<ModelConfig>;
   credentials!: Table<Credential>;
@@ -57,7 +62,31 @@ export class CookDatabase extends Dexie {
       conversationSummaries: 'id, [lastSentAt+id]',
       conversationSearch: 'id, lastSentAt',
     });
+    this.version(5).stores({
+      recipes: 'id, &[source+identity], source, *aliases, *nameKeys',
+      sessions:
+        'id, recipeId, versionId, createdAt, [source+createdAt+id], [versionId+createdAt+id]',
+      conversationMessages: 'id, conversationId, [conversationId+sequence], taskId, status',
+      messageSearch: 'id, conversationId',
+      timers: 'id, sessionId, [sessionId+targetType+targetId], status, [status+createdAt]',
+      tasks: 'id, status, contextId, owner, [status+createdAt+id]',
+      cookingMessages: 'id, sessionId, createdAt, [sessionId+createdAt], [sessionId+createdAt+id]',
+    });
+    this.recipes.hook('creating', (_key, recipe) => {
+      recipe.nameKeys = [...new Set([recipe.name, ...recipe.aliases].map(identity))];
+    });
+    this.recipes.hook('updating', (changes: Partial<Recipe>, _key, recipe) => {
+      if (changes.name !== undefined || changes.aliases !== undefined)
+        return {
+          nameKeys: [
+            ...new Set(
+              [changes.name ?? recipe.name, ...(changes.aliases ?? recipe.aliases)].map(identity),
+            ),
+          ],
+        };
+    });
     this.on('populate', (transaction) => {
+      void transaction.table('settings').put({ id: 'recipeNamesReady-v5', value: true });
       // Only upgraded databases contain snapshots that predate the list projection.
       void transaction.table('settings').put({ id: 'recipeListReady-v3', value: true });
       void transaction.table('settings').put({ id: 'versionSearchReady-v4', value: true });

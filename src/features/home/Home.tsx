@@ -15,26 +15,16 @@ import {
 import { useApp } from '../../app/context';
 import { db, setSetting } from '../../storage/db';
 import {
-  changeConversation,
-  conversationTables,
-  saveConversation,
-} from '../../storage/searchIndex';
-import {
-  commitGeneration,
-  findExisting,
-  reuseRecipe,
-  latestVersion,
-} from '../../storage/repository';
-import {
-  uid,
-  type Candidate,
-  type Content,
-  type Conversation,
-  type RecipeVersion,
-} from '../../domain/schema';
+  appendMessages,
+  migrateConversation,
+  recentMessages,
+  updateMessage,
+  messageTables,
+} from '../../storage/messages';
+import { useMessagePage } from '../../shared/useMessagePage';
+import { commitGeneration, reuseRecipe, latestVersion } from '../../storage/repository';
+import { uid, type Candidate, type Content, type RecipeVersion } from '../../domain/schema';
 import { restrictionConflict, identity, effectivePreferences } from '../../domain/rules';
-import { recommend, generate } from '../../services/ai/cooking';
-import { search } from '../../services/ai/search';
 import { TaskTimeoutError } from '../../services/ai/budget';
 import { MessageHistory } from '../../shared/MessageHistory';
 import { HomeComposer } from './HomeComposer';
@@ -43,21 +33,28 @@ import { ActionButton } from '../../shared/ActionButton';
 export function Home() {
   const app = useApp();
   const { data, busy } = app;
-  const conversationSnapshot = useLiveQuery(
-    async () => ({
+  const conversationSnapshot = useLiveQuery(async () => {
+    return {
       id: data.activeConversationId,
       conversation: data.activeConversationId
         ? await db.conversations.get(data.activeConversationId)
         : undefined,
-    }),
-    [data.activeConversationId],
-  );
+    };
+  }, [data.activeConversationId]);
+  useEffect(() => {
+    if (data.activeConversationId)
+      void app.safe(() => migrateConversation(data.activeConversationId!));
+  }, [data.activeConversationId, app.safe]);
   const conversationReady =
-    !data.activeConversationId || conversationSnapshot?.id === data.activeConversationId;
+    !data.activeConversationId ||
+    (conversationSnapshot?.id === data.activeConversationId &&
+      !conversationSnapshot.conversation?.messages.length);
   const conversation =
     conversationSnapshot?.id === data.activeConversationId
       ? conversationSnapshot.conversation
       : undefined;
+  const messagePage = useMessagePage('conversation', data.activeConversationId ?? '');
+  const messages = conversationReady ? messagePage.messages : [];
   const recipesByName = useMemo(() => {
     const names = new Map<string, (typeof data.recipes)[number]>();
     for (const recipe of data.recipes)
@@ -69,7 +66,7 @@ export function Home() {
   const recipeIds = useMemo(
     () => [
       ...new Set(
-        conversation?.messages.flatMap(
+        messages.flatMap(
           (message) =>
             message.candidates?.flatMap((candidate) => {
               const recipe = recipesByName.get(identity(candidate.name));
@@ -78,7 +75,7 @@ export function Home() {
         ) ?? [],
       ),
     ],
-    [conversation, recipesByName],
+    [messages, recipesByName],
   );
   const latestVersions = useLiveQuery(async () => {
     const rows = await Promise.all(recipeIds.map(latestVersion));
@@ -87,14 +84,7 @@ export function Home() {
     return latest;
   }, [recipeIds]);
   const preferences = useMemo(
-    () =>
-      effectivePreferences(
-        data.preferences,
-        conversation?.messages
-          .filter((m) => m.role === 'user')
-          .map((m) => m.text)
-          .join('\n') ?? '',
-      ),
+    () => effectivePreferences(data.preferences, conversation?.requirements ?? ''),
     [data.preferences, conversation],
   );
   const [draft, setDraft] = useState<{
@@ -109,7 +99,7 @@ export function Home() {
       block: 'end',
       behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
     });
-  }, [conversation?.messages.length, busy]);
+  }, [conversation?.messageCount, busy]);
   const requireModel = () => {
     if (!data.models.length) {
       app.notify('请先添加模型配置');
@@ -124,45 +114,36 @@ export function Home() {
     const id = conversation?.id ?? uid();
     const assistantId = uid();
     await app.work('正在分析…', 'recommend', id, async ({ task, model, signal, valid }) => {
-      await db.transaction('rw', [...conversationTables, db.settings], async () => {
-        const previous = await db.conversations.get(id);
-        const current: Conversation = previous ?? {
-          id,
-          title: text.slice(0, 28),
-          createdAt: Date.now(),
-          lastSentAt: Date.now(),
-          messages: [],
-        };
-        current.lastSentAt = Date.now();
-        current.messages.push(
-          { id: uid(), role: 'user', text, createdAt: Date.now() },
-          {
-            id: assistantId,
-            taskId: task.id,
-            role: 'assistant',
-            text: '正在分析…',
-            status: 'pending',
-            createdAt: Date.now(),
-          },
+      const { recommend } = await import('../../services/ai/cooking');
+      if (!valid()) return;
+      await db.transaction('rw', [db.tasks, ...messageTables, db.settings], async () => {
+        if ((await db.tasks.get(task.id))?.status !== 'pending') return;
+        await appendMessages(
+          { id, title: text.slice(0, 28), createdAt: Date.now(), lastSentAt: Date.now() },
+          [
+            { id: uid(), role: 'user', text, createdAt: Date.now() },
+            {
+              id: assistantId,
+              taskId: task.id,
+              role: 'assistant',
+              text: '正在分析…',
+              status: 'pending',
+              createdAt: Date.now(),
+            },
+          ],
         );
-        await saveConversation(current);
         await setSetting('activeConversationId', id);
       });
+      if (!valid()) return;
+      messagePage.latest();
       clear();
       try {
         const saved = await db.conversations.get(id);
-        const history = saved!.messages
-          .filter(
-            (m) => m.status !== 'pending' && m.status !== 'failed' && m.status !== 'interrupted',
-          )
+        const history = (await recentMessages(id))
+          .filter((m) => !m.status || m.status === 'done')
           .map((m) => ({ role: m.role, content: m.text }));
-        const restrictions = effectivePreferences(
-          data.preferences,
-          saved!.messages
-            .filter((m) => m.role === 'user')
-            .map((m) => m.text)
-            .join('\n'),
-        );
+        history.unshift({ role: 'user', content: `明确要求：${saved?.requirements ?? ''}` });
+        const restrictions = effectivePreferences(data.preferences, saved?.requirements ?? '');
         const result = await recommend(
           model,
           history,
@@ -171,30 +152,21 @@ export function Home() {
           signal,
         );
         if (!valid()) return;
-        await db.transaction('rw', [db.tasks, ...conversationTables], async () => {
+        await db.transaction('rw', [db.tasks, ...messageTables], async () => {
           if ((await db.tasks.get(task.id))?.status !== 'pending') return;
-          const current = await db.conversations.get(id);
-          if (!current) return;
-          current.messages = current.messages.map((m) =>
-            m.id === assistantId
-              ? { ...m, text: result.text, candidates: result.candidates, status: 'done' }
-              : m,
-          );
-          await saveConversation(current);
+          if (!(await db.conversations.get(id))) return;
+          await updateMessage(assistantId, {
+            text: result.text,
+            candidates: result.candidates,
+            status: 'done',
+          });
           await db.tasks.update(task.id, { status: 'done' });
         });
       } catch (error) {
         const cancelled = signal.aborted && !(signal.reason instanceof TaskTimeoutError);
-        await changeConversation(id, (c) => {
-          c.messages = c.messages.map((m) =>
-            m.id === assistantId
-              ? {
-                  ...m,
-                  status: cancelled ? 'interrupted' : 'failed',
-                  text: cancelled ? '请求已取消，可继续发送。' : '分析失败，可重新发送。',
-                }
-              : m,
-          );
+        await updateMessage(assistantId, {
+          status: cancelled ? 'interrupted' : 'failed',
+          text: cancelled ? '请求已取消，可继续发送。' : '分析失败，可重新发送。',
         });
         throw error;
       }
@@ -202,36 +174,43 @@ export function Home() {
   };
   const select = async (candidate: Candidate) => {
     if (!conversationReady || busy) return;
-    const reused = await app.safe(() => reuseRecipe(candidate.name, preferences));
+    let conflict = false;
+    const reused = await app.safe(async () => {
+      try {
+        return await reuseRecipe(candidate.name, preferences);
+      } catch (error) {
+        conflict = true;
+        throw error;
+      }
+    });
     if (reused) {
       app.notify('沿用已保存版本的用量与做法；可在问问 AI 中请求调整');
       await app.navigate({ page: 'cook', sessionId: reused.id });
       return;
     }
-    if (await findExisting(candidate.name)) return; // Existing conflict already explained; never generate a bypass duplicate.
+    if (conflict) return;
     if (!requireModel()) return;
     setDraft(null);
     await app.work(
       `正在生成 ${candidate.name}…`,
       'generate',
       conversation?.id ?? '',
-      async ({ task, model, signal, valid }) => {
-        // DeepSeek 官方接口才有 tools/search：先查一遍真实做法，再让模型据此写完整指南。
+      async ({ task, model, signal, valid, stage }) => {
+        const [{ generate }, { search }] = await Promise.all([
+          import('../../services/ai/cooking'),
+          import('../../services/ai/search'),
+        ]);
+        stage('正在核对做法…');
         const references = await search(model, `${candidate.name} 做法 食材用量`, { signal });
         if (!valid()) return;
+        stage(`正在生成 ${candidate.name}…`);
         const content = await generate(
           model,
           candidate,
-          conversation?.messages
-            .filter((m) => m.status !== 'pending')
-            .map((m) => `${m.role}: ${m.text}`)
-            .join('\n') ?? '',
+          `${conversation?.requirements ?? ''}\n${(await recentMessages(conversation?.id ?? '')).map((m) => `${m.role}: ${m.text}`).join('\n')}`,
           preferences,
           signal,
-          conversation?.messages
-            .filter((m) => m.role === 'user')
-            .map((m) => m.text)
-            .join('\n') ?? '',
+          conversation?.requirements ?? '',
           references,
         );
         if (!valid()) return;
@@ -321,9 +300,10 @@ export function Home() {
         )}
         {conversation && (
           <div className="discovery-conversation" aria-label="做菜灵感对话">
+            {conversationReady ? messagePage.controls : <p role="status">正在读取对话…</p>}
             <MessageHistory
               key={conversation.id}
-              messages={conversation.messages}
+              messages={messages}
               renderMessage={(message) => (
                 <div className={`message ${message.role}`} key={message.id}>
                   {message.role === 'assistant' && (

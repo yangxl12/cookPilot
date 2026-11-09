@@ -1,15 +1,11 @@
-import { useLiveQuery } from 'dexie-react-hooks';
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Search, X } from 'lucide-react';
-import { useApp, type Route } from '../../app/context';
-import { catalogSync, loadCatalog } from '../../assets/recipes';
-import { contentSearchText } from '../../domain/rules';
-import type { BuiltinRecipe, SearchText } from '../../domain/schema';
+import { useApp } from '../../app/context';
+import { loadCatalog } from '../../assets/recipes';
 import { db, setSetting } from '../../storage/db';
 import { openBuiltin } from '../../storage/repository';
 import { PageHeader } from '../../shared/PageHeader';
-import { usePagedItems } from '../../shared/usePagedItems';
-import { prepareSearchIndex, readSearchIndex, searchableText } from '../../storage/searchIndex';
+import { WindowList } from '../../shared/WindowList';
 
 const sources = [
   { id: 'ai', label: 'AI 菜谱' },
@@ -20,34 +16,9 @@ type Source = (typeof sources)[number]['id'];
 type SearchResult = {
   id: string;
   title: string;
-  parts: SearchText[];
   source: Source;
-  route?: Route;
-  builtin?: BuiltinRecipe;
-  conversationId?: string;
+  snippet: string;
 };
-
-const EMPTY: never[] = [];
-
-/**
- * The bundled catalog is static, so its search text is built at most once per page lifetime.
- * Searching used to rebuild all 200 entries on every mount.
- */
-let catalogResults: SearchResult[] | null = null;
-function catalogIndex(): SearchResult[] | null {
-  const data = catalogSync();
-  if (!data) return null;
-  return (catalogResults ??= data.map((recipe) => {
-    const body = `${recipe.sourceText} ${contentSearchText(recipe.content)}`;
-    return {
-      id: recipe.id,
-      title: recipe.content.title,
-      parts: [searchableText(`${recipe.content.title} ${body}`)],
-      source: 'catalog' as const,
-      builtin: recipe,
-    };
-  }));
-}
 
 function initialSearch() {
   const params = new URLSearchParams(location.hash.split('?')[1]);
@@ -69,14 +40,6 @@ function Highlight({ text, terms, pattern }: { text: string; terms: string[]; pa
     );
 }
 
-function snippet(body: string, terms: string[]) {
-  const text = body.replace(/\s+/g, ' ').trim();
-  const lower = text.toLowerCase();
-  const positions = terms.map((term) => lower.indexOf(term)).filter((n) => n >= 0);
-  const start = positions.length ? Math.max(0, Math.min(...positions) - 24) : 0;
-  return `${start ? '…' : ''}${text.slice(start, start + 110)}${text.length > start + 110 ? '…' : ''}`;
-}
-
 export function SearchPage() {
   const app = useApp();
   const [query, setQuery] = useState(initialSearch);
@@ -87,40 +50,55 @@ export function SearchPage() {
     [deferredQuery],
   );
   const active = terms.length > 0;
-  const stored = useLiveQuery(() => (active ? readSearchIndex() : undefined), [active]);
+  const worker = useRef<Worker | null>(null);
+  const revision = useRef(0);
+  const [matches, setMatches] = useState<SearchResult[]>([]);
   const [indexError, setIndexError] = useState<Error>();
+  const [loaded, setLoaded] = useState(false);
   useEffect(() => {
-    if (!active) return;
-    let mounted = true;
-    void Promise.all([prepareSearchIndex('version'), prepareSearchIndex('conversation')]).catch(
-      (error: Error) => {
-        if (mounted) setIndexError(error);
-      },
-    );
+    if (!active) {
+      setMatches([]);
+      setLoaded(false);
+      return;
+    }
+    const current = new Worker(new URL('../../storage/search.worker.ts', import.meta.url), {
+      type: 'module',
+    });
+    worker.current = current;
+    current.onmessage = ({
+      data,
+    }: MessageEvent<{
+      revision: number;
+      rows: SearchResult[];
+      reads: Record<string, number>;
+      error?: string;
+    }>) => {
+      if (data.error) {
+        setIndexError(new Error(data.error));
+        return;
+      }
+      if (data.revision === revision.current) {
+        if (performance.getEntriesByName('cookpilot:search').length >= 100)
+          performance.clearMeasures('cookpilot:search');
+        performance.measure('cookpilot:search', {
+          start: performance.now(),
+          detail: { reads: data.reads, count: data.rows.length },
+        });
+        setMatches(data.rows);
+        setLoaded(true);
+      }
+    };
+    current.onerror = () => setIndexError(new Error('搜索加载失败，请重新打开搜索'));
     return () => {
-      mounted = false;
+      current.terminate();
+      worker.current = null;
     };
   }, [active]);
-  const [builtins, setBuiltins] = useState<SearchResult[]>(() => catalogIndex() ?? EMPTY);
-  const [catalogError, setCatalogError] = useState<Error>();
   useEffect(() => {
-    if (builtins.length) return;
-    let mounted = true;
-    // Build the static catalog index after the page has painted: typing should never wait for it.
-    const timer = setTimeout(() => {
-      void loadCatalog()
-        .then(() => {
-          if (mounted) setBuiltins(catalogIndex() ?? EMPTY);
-        })
-        .catch((error: Error) => {
-          if (mounted) setCatalogError(error);
-        });
-    }, 0);
-    return () => {
-      mounted = false;
-      clearTimeout(timer);
-    };
-  }, [builtins.length]);
+    revision.current++;
+    setLoaded(false);
+    worker.current?.postMessage({ revision: revision.current, terms });
+  }, [terms]);
 
   useEffect(() => {
     input.current?.focus();
@@ -145,43 +123,24 @@ export function SearchPage() {
     window.scrollTo(0, 0);
   }, [query]);
 
-  const all = useMemo<SearchResult[]>(() => {
-    return [
-      ...(stored ?? []).map((result) => ({
-        ...result,
-        ...(result.source === 'ai'
-          ? { route: { page: 'cook' as const, sessionId: result.id } }
-          : { conversationId: result.id }),
-      })),
-      ...builtins,
-    ];
-  }, [stored, builtins]);
-
-  const matches = useMemo(
-    () =>
-      terms.length
-        ? all.filter((result) =>
-            terms.every((term) => result.parts.some((part) => part.searchText.includes(term))),
-          )
-        : [],
-    [all, terms],
-  );
   const chooseQuery = (value: string) => {
     setQuery(value);
     input.current?.focus();
   };
   const open = useCallback(
     async (result: SearchResult) => {
-      if (result.conversationId) {
+      if (result.source === 'conversations') {
         await app.cancel();
-        await setSetting('activeConversationId', result.conversationId);
+        await setSetting('activeConversationId', result.id);
         await app.navigate({ page: 'home' });
-      } else if (result.builtin) {
-        const session = await openBuiltin(result.builtin, app.data.preferences);
+      } else if (result.source === 'catalog') {
+        const builtin = (await loadCatalog()).find((recipe) => recipe.id === result.id);
+        if (!builtin) throw new Error('菜谱不存在');
+        const session = await openBuiltin(builtin, app.data.preferences);
         await app.navigate({ page: 'cook', sessionId: session.id });
-      } else if (result.route) {
-        await db.sessions.update(result.route.sessionId!, { currentCard: 0 });
-        await app.navigate(result.route);
+      } else {
+        await db.sessions.update(result.id, { currentCard: 0 });
+        await app.navigate({ page: 'cook', sessionId: result.id });
       }
     },
     [app],
@@ -193,7 +152,6 @@ export function SearchPage() {
     [app.safe, open],
   );
 
-  if (catalogError) throw catalogError;
   if (indexError) throw indexError;
 
   return (
@@ -235,9 +193,7 @@ export function SearchPage() {
           </form>
         </div>
 
-        {active && stored !== undefined && (
-          <SearchResults matches={matches} terms={terms} onSelect={select} />
-        )}
+        {active && loaded && <SearchResults matches={matches} terms={terms} onSelect={select} />}
       </main>
     </>
   );
@@ -286,26 +242,25 @@ function SearchGroup({
   terms: string[];
   onSelect: (result: SearchResult) => void;
 }) {
-  const { visible, sentinel, hasMore } = usePagedItems(rows, terms.join('\0'));
   const pattern = useMemo(() => patternFor(terms), [terms]);
   return (
     <section className="search-group" aria-label={`${label}搜索结果`}>
       <h2>{label}</h2>
-      {visible.map((result) => (
-        <button className="search-result" key={result.id} onClick={() => onSelect(result)}>
-          <strong>
-            <Highlight text={result.title} terms={terms} pattern={pattern} />
-          </strong>
-          <p>
-            <Highlight
-              text={snippet(result.parts.map((p) => p.body).join(' '), terms)}
-              terms={terms}
-              pattern={pattern}
-            />
-          </p>
-        </button>
-      ))}
-      {hasMore && <div className="list-sentinel" ref={sentinel} aria-hidden="true" />}
+      <WindowList
+        key={terms.join('\0')}
+        items={rows}
+        estimate={120}
+        render={(result) => (
+          <button className="search-result" key={result.id} onClick={() => onSelect(result)}>
+            <strong>
+              <Highlight text={result.title} terms={terms} pattern={pattern} />
+            </strong>
+            <p>
+              <Highlight text={result.snippet} terms={terms} pattern={pattern} />
+            </p>
+          </button>
+        )}
+      />
     </section>
   );
 }

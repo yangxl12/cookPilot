@@ -1,3 +1,4 @@
+import { useMessagePage } from '../../shared/useMessagePage';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -52,8 +53,9 @@ function TimerAction({
   seconds: number;
 }) {
   const app = useApp();
-  const existing = app.data.timers.find(
-    (timer) => timer.sessionId === sessionId && timer.targetType === type && timer.targetId === id,
+  const existing = useLiveQuery(
+    () => db.timers.where('[sessionId+targetType+targetId]').equals([sessionId, type, id]).first(),
+    [sessionId, type, id],
   );
   const duration = seconds >= 60 ? `${Math.round(seconds / 6) / 10} 分钟` : `${seconds} 秒`;
   return (
@@ -140,15 +142,8 @@ function Questions({
   const [selected, setSelected] = useState(
     session.execution.map((e) => `${e.targetType}:${e.targetId}`),
   );
-  const messages =
-    useLiveQuery(
-      () =>
-        db.cookingMessages
-          .where('[sessionId+createdAt]')
-          .between([session.id, -Infinity], [session.id, Infinity])
-          .toArray(),
-      [session.id],
-    ) ?? [];
+  const messagePage = useMessagePage('cooking', session.id);
+  const messages = messagePage.messages;
   const content = version.content;
   const submit = async (input = question) => {
     const text = input.trim();
@@ -157,7 +152,7 @@ function Questions({
       '正在询问 AI…',
       'question',
       session.id,
-      async ({ task, model, signal, valid }) => {
+      async ({ task, model, signal, valid, stage }) => {
         const fresh = await db.sessions.get(session.id);
         if (!fresh) throw new Error('制作记录不存在');
         const currentVersion = await db.versions.get(fresh.versionId);
@@ -170,6 +165,7 @@ function Questions({
           createdAt: Date.now(),
         });
         setQuestion('');
+        messagePage.latest();
         const preferences = {
           ...app.data.preferences,
           avoidances: [currentVersion.preferences?.avoidances, app.data.preferences.avoidances]
@@ -177,11 +173,13 @@ function Questions({
             .join('、'),
         };
         // 只注入与问题强相关的网页；分数太低（多为泛泛而谈）就让模型用菜谱自身作答。
+        stage(webSearch && searchable ? '正在查找参考…' : '正在询问 AI…');
         const references =
           webSearch && searchable
             ? await search(model, text, { signal, count: 3, minScore: 1.15, maxChars: 400 })
             : [];
         if (!valid()) return;
+        stage('正在询问 AI…');
         const answer = await askCooking(
           model,
           text,
@@ -240,6 +238,7 @@ function Questions({
     () => (
       <div className="cooking-messages" aria-live="polite">
         {!messages.length && <p className="empty-help">遇到状况，描述锅里发生了什么。</p>}
+        {messagePage.controls}
         <MessageHistory
           messages={messages}
           renderMessage={(message) => (
@@ -310,7 +309,7 @@ function Questions({
         />
       </div>
     ),
-    [messages, content, app.busy, app.safe],
+    [messages, content, app.busy, app.safe, messagePage.controls],
   );
   return (
     <Sheet

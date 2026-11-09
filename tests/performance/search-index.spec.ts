@@ -201,7 +201,9 @@ for (const size of [250, 1000]) {
       await expect(page.getByRole('region', { name: `${source}搜索结果` })).toBeVisible();
     const firstResultsMs = performance.now() - firstStart;
     const reads = await page.evaluate(
-      () => (window as typeof window & { searchReads: Record<string, number> }).searchReads,
+      () =>
+        (performance.getEntriesByName('cookpilot:search').at(-1) as PerformanceMeasure).detail
+          .reads as Record<string, number>,
     );
     expect(reads.versions ?? 0).toBe(0);
     expect(reads.conversations ?? 0).toBe(0);
@@ -220,7 +222,21 @@ for (const size of [250, 1000]) {
     const laterReads = await page.evaluate(
       () => (window as typeof window & { searchReads: Record<string, number> }).searchReads,
     );
-    expect(laterReads).toEqual(reads);
+    expect(laterReads).toEqual(emptyReads);
+    const workerLaterReads = await page.evaluate(
+      () =>
+        (performance.getEntriesByName('cookpilot:search').at(-1) as PerformanceMeasure).detail
+          .reads as Record<string, number>,
+    );
+    for (const table of [
+      'versions',
+      'conversations',
+      'sessions',
+      'versionSearch',
+      'versionSummaries',
+      'conversationSearch',
+    ])
+      expect(workerLaterReads[table]).toBe(reads[table]);
     await page.evaluate(() => {
       location.hash = '#home';
     });
@@ -274,5 +290,63 @@ for (const size of [250, 1000]) {
       ),
     );
     await testInfo.attach('search-metrics', { path: metricsPath, contentType: 'application/json' });
+    if (size === 1000) {
+      // Isolate first-time preparation from steady-state reads. This intentionally
+      // removes only rebuildable projections, retaining every source snapshot.
+      await page.goto('/#home');
+      await page.getByRole('heading', { name: '想做什么菜？' }).waitFor();
+      await page.evaluate(async () => {
+        const database = await new Promise<IDBDatabase>((resolve) => {
+          const request = indexedDB.open('cookpilot-v1');
+          request.onsuccess = () => resolve(request.result);
+        });
+        const transaction = database.transaction(
+          ['versionSearch', 'conversationSearch', 'settings'],
+          'readwrite',
+        );
+        transaction.objectStore('versionSearch').clear();
+        transaction.objectStore('conversationSearch').clear();
+        for (const kind of ['version', 'conversation']) {
+          transaction.objectStore('settings').put({ id: `${kind}SearchReady-v4`, value: false });
+          transaction.objectStore('settings').delete(`${kind}SearchAfter-v4`);
+        }
+        await new Promise<void>((resolve, reject) => {
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+        });
+        database.close();
+        Object.assign(window, { backfillLongTasks: [] });
+        new PerformanceObserver((list) =>
+          (window as typeof window & { backfillLongTasks: number[] }).backfillLongTasks.push(
+            ...list.getEntries().map((e) => e.duration),
+          ),
+        ).observe({ type: 'longtask' });
+        location.hash = '#search?q=鸡蛋';
+      });
+      const began = performance.now();
+      await expect(page.getByRole('region', { name: 'AI 菜谱搜索结果' })).toBeVisible();
+      const backfill = await page.evaluate(() => ({
+        reads: (performance.getEntriesByName('cookpilot:search').at(-1) as PerformanceMeasure)
+          .detail.reads,
+        pageLongTasks: (window as typeof window & { backfillLongTasks: number[] })
+          .backfillLongTasks,
+      }));
+      expect(backfill.reads.versions).toBe(3000);
+      expect(backfill.reads.conversations).toBe(400);
+      await writeFile(
+        testInfo.outputPath('backfill-1000.json'),
+        JSON.stringify(
+          {
+            ...backfill,
+            elapsedMs: performance.now() - began,
+            cpuRate: 4,
+            browser: context.browser()?.version(),
+            note: 'Projection preparation in worker; page long tasks exclude worker tasks.',
+          },
+          null,
+          2,
+        ),
+      );
+    }
   });
 }

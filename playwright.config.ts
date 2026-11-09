@@ -8,7 +8,7 @@ export default defineConfig({
     baseURL: 'http://localhost:5173',
     ...devices['iPhone 13'],
     browserName: 'chromium',
-    channel: 'chrome',
+    channel: process.env.CI ? undefined : 'chrome',
     serviceWorkers: 'block',
   },
   webServer: { command: 'npm run dev', url: 'http://localhost:5173', reuseExistingServer: true },

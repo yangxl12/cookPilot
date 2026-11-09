@@ -1,3 +1,4 @@
+import { readConversation } from '../../src/storage/messages';
 import { expect, it, vi } from 'vitest';
 import { db, setSetting, setting } from '../../src/storage/db';
 import {
@@ -73,7 +74,7 @@ it.each([1, 2])('v%i原库升级保留对话、问答和制作记录，列表回
     );
     old.close();
     await upgraded.open();
-    expect(upgraded.verno).toBe(4);
+    expect(upgraded.verno).toBe(5);
     expect(await upgraded.versionSummaries.count()).toBe(0);
     expect((await upgraded.settings.get('recipeListReady-v3'))?.value).not.toBe(true);
     await backfillRecipeListBatch(upgraded);
@@ -256,7 +257,7 @@ it('启动不重写已完成对话，并清理废弃租约、保留活跃请求'
     expect(updated).not.toContain('live-chat');
     expect((await db.tasks.get('stale-task'))?.status).toBe('interrupted');
     expect((await db.tasks.get('live-task'))?.status).toBe('pending');
-    expect((await db.conversations.get('orphan'))?.messages[0].status).toBe('interrupted');
+    expect((await readConversation('orphan'))?.messages[0].status).toBe('interrupted');
     expect(await db.settings.get('lease:stale')).toBeUndefined();
     expect(await db.settings.get('lease:invalid')).toBeUndefined();
     expect((await db.settings.get('lease:live'))?.value).toBe(now);

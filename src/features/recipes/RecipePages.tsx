@@ -1,4 +1,3 @@
-import { useLiveQuery } from 'dexie-react-hooks';
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpen,
@@ -12,8 +11,9 @@ import {
   X,
 } from 'lucide-react';
 import { useApp } from '../../app/context';
-import { prepareRecipeList, readRecipeList } from '../../storage/recipeList';
-import { usePageLimit } from '../../shared/usePageLimit';
+import { prepareRecipeList } from '../../storage/recipeList';
+import { useRecipeWindow } from '../../shared/useRecipeWindow';
+import { WindowList } from '../../shared/WindowList';
 import { useCatalog } from '../../shared/useCatalog';
 import { usePagedItems } from '../../shared/usePagedItems';
 import { cookAgain, deleteSession, openBuiltin } from '../../storage/repository';
@@ -35,11 +35,8 @@ export function RecipePages({ ai = false }: { ai?: boolean }) {
     () => deferredSearch.toLowerCase().trim().split(/\s+/).filter(Boolean),
     [deferredSearch],
   );
-  const savedPage = usePageLimit(deferredSearch);
-  const saved = useLiveQuery(
-    () => (ai ? readRecipeList(savedPage.limit, tokens) : undefined),
-    [ai, savedPage.limit, tokens],
-  );
+  const savedWindow = useRecipeWindow(ai, tokens);
+  const saved = savedWindow.page;
   const [indexError, setIndexError] = useState<Error>();
   useEffect(() => {
     if (!ai) return;
@@ -155,6 +152,10 @@ export function RecipePages({ ai = false }: { ai?: boolean }) {
       }),
     [saved, app.safe, app.navigate],
   );
+  const savedItems = useMemo(
+    () => savedRows.map((node) => ({ id: String(node.key), node })),
+    [savedRows],
+  );
   if (indexError) throw indexError;
   if (ai ? !saved : !catalog)
     return (
@@ -217,12 +218,13 @@ export function RecipePages({ ai = false }: { ai?: boolean }) {
         {ai && (
           <>
             <p className="list-count">{saved!.total} 条制作记录</p>
-            {savedRows}
-            {saved!.hasMore &&
-              saved!.limit === savedPage.limit &&
-              saved!.query === tokens.join('\0') && (
-                <div className="list-sentinel" ref={savedPage.sentinel} aria-hidden="true" />
-              )}
+            <WindowList
+              key={deferredSearch}
+              items={savedItems}
+              render={(item) => item.node}
+              estimate={220}
+              onEnd={savedWindow.loadMore}
+            />
           </>
         )}
         {(ai ? !saved!.total : !builtins.length) && (
